@@ -21,3 +21,115 @@ html,
 body {
   min-height: 100%;
 }
+
+/*
+ * Brand accents layered on top of the neutral theme.
+ *
+ * Palette extracted from the VibeNet logo — a vivid green -> cyan -> blue
+ * gradient. The rules below are intentionally *unlayered*: unlayered CSS wins
+ * over the design system's @layer styles, so we can tint the layout and CTAs
+ * without ejecting or rebuilding the theme.
+ */
+:root {
+  --vibe-green: #7ed321; /* vivid lime green from the logo mark */
+  --vibe-cyan: #22c9e6; /* cyan midpoint bridging green and blue */
+  --vibe-blue: #38b5ff; /* sky blue from the logo mark */
+  --vibe-gradient: linear-gradient(
+    135deg,
+    var(--vibe-green) 0%,
+    var(--vibe-cyan) 50%,
+    var(--vibe-blue) 100%
+  );
+}
+
+/* Ambient brand glow — keeps the center light for readable text. */
+body {
+  background:
+    radial-gradient(1100px 620px at 10% -8%, rgba(56, 181, 255, 0.18), transparent 60%),
+    radial-gradient(1000px 680px at 110% 8%, rgba(126, 211, 33, 0.16), transparent 55%),
+    radial-gradient(900px 640px at 55% 118%, rgba(56, 181, 255, 0.10), transparent 60%),
+    #ffffff;
+  background-attachment: fixed;
+}
+
+/* Let the ambient background show through the Astryx layout surface. */
+.astryx-layout,
+.astryx-layout-content {
+  background: transparent;
+}
+
+/* Brand wordmark in the hero. Size is controlled by Tailwind on the <img>. */
+.vibe-logo {
+  margin: 0;
+  line-height: 0;
+}
+
+/* Coloured eyebrow above the VibeNet wordmark. */
+.vibe-eyebrow {
+  color: #0284c7; /* darker shade of brand blue for readable small text */
+  letter-spacing: 0.16em;
+}
+
+/* Brand gradient applied as text fill — used for subtle stat highlights. */
+.vibe-gradient-text {
+  background: var(--vibe-gradient);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+/* Subtle brand ring on the image tiles. */
+.vibe-tile {
+  box-shadow: 0 1px 2px rgba(6, 40, 61, 0.06);
+  outline: 1px solid rgba(56, 181, 255, 0.08);
+  outline-offset: -1px;
+}
+
+/* Register (primary CTA): solid green -> blue gradient fill, white label. */
+.vibe-cta .astryx-button[data-variant="primary"] {
+  background: var(--vibe-gradient);
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+  text-shadow: 0 1px 2px rgba(3, 20, 40, 0.28); /* keeps white legible over green */
+  box-shadow: 0 10px 28px rgba(56, 181, 255, 0.30);
+}
+.vibe-cta .astryx-button[data-variant="primary"]:hover {
+  filter: brightness(1.05);
+}
+
+/*
+ * Login (secondary CTA): gradient border over a white fill. The two-layer
+ * background paints white inside the padding box and the brand gradient in the
+ * border box, so the transparent border reveals the gradient.
+ */
+.vibe-cta .astryx-button[data-variant="secondary"] {
+  background:
+    linear-gradient(#ffffff, #ffffff) padding-box,
+    var(--vibe-gradient) border-box;
+  border: 2px solid transparent;
+  color: #0284c7; /* brand blue label */
+  font-weight: 600;
+}
+.vibe-cta .astryx-button[data-variant="secondary"]:hover {
+  background:
+    linear-gradient(rgba(56, 181, 255, 0.06), rgba(56, 181, 255, 0.06)) padding-box,
+    var(--vibe-gradient) border-box;
+}
+
+/* Global footer. */
+.vibe-footer {
+  margin-top: auto; /* pin to the bottom when page content is short */
+  border-top: 1px solid var(--color-border);
+  padding: 20px 24px;
+}
+.vibe-footer__inner {
+  width: 100%;
+  max-width: 1400px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+}

@@ -1,64 +1,49 @@
 // VibeNet — landing page (route: "/").
 //
-// Adapted from the Astryx "side-gallery" template: marketing copy and the two
-// primary CTAs (Login / Register) sit on the left, with an image collage on the
-// right. Uses @astryxdesign/core components on the "neutral" theme (activated in
-// layout.tsx via data-astryx-theme="neutral").
+// Adapted from the Astryx "side-gallery" template: brand, marketing copy, and the
+// two primary CTAs (Login / Register) sit on the left, with an image collage on
+// the right. Layout and spacing are handled with Tailwind utilities; the design
+// system provides the typography (<Text>), CTAs (<Button>), and <Divider>.
 //
-// The CTAs are real Astryx <Button>s wired for client-side navigation with
-// Next's router, so they are ready to point at the auth routes as those pages
-// are built out.
+// The main content is width-constrained and horizontally centered (mx-auto +
+// max-w-7xl), pushed down from the top edge with generous top padding, and it
+// collapses to a single stacked column on small screens.
 
 'use client';
 
 import { useRouter } from 'next/navigation';
-import {
-  VStack,
-  HStack,
-  Layout,
-  LayoutContent,
-} from '@astryxdesign/core/Layout';
-import { Text, Heading } from '@astryxdesign/core/Text';
+import { Text } from '@astryxdesign/core/Text';
 import { Button } from '@astryxdesign/core/Button';
-import { AspectRatio } from '@astryxdesign/core/AspectRatio';
-import { Grid } from '@astryxdesign/core/Grid';
 import { Divider } from '@astryxdesign/core/Divider';
 
-// Image fill is a plain inline style so it renders without any CSS compiler.
-const imageStyle = {
-  width: '100%',
-  height: '100%',
-  objectFit: 'cover' as const,
-};
-
-const imageClip = {
-  borderRadius: 'var(--radius-element)',
-};
-
 // ─── Image Data ─────────────────────────────────────────────────────────────
-// Neutral placeholder collage. Swap these for real product/marketing imagery.
+// Curated, high-resolution collage served from /public/gallery.
+// Source: Unsplash (free to use). Arranged for a balanced spread of colour.
 
-const PLACEHOLDER_SRC =
-  'data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20400%20300%22%20preserveAspectRatio%3D%22xMidYMid%20slice%22%3E%3Crect%20width%3D%22400%22%20height%3D%22300%22%20fill%3D%22%23f5f6f8%22%2F%3E%3Cg%20transform%3D%22translate%28200%20150%29%22%20fill%3D%22none%22%20stroke%3D%22%23c2cad6%22%20stroke-width%3D%225%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Crect%20x%3D%22-44%22%20y%3D%22-44%22%20width%3D%2288%22%20height%3D%2288%22%20rx%3D%2216%22%2F%3E%3Ccircle%20cx%3D%2218%22%20cy%3D%22-18%22%20r%3D%222.5%22%20fill%3D%22%23c2cad6%22%20stroke%3D%22none%22%2F%3E%3Cpath%20d%3D%22M-34%2030%20L-8%200%20L10%2018%20L20%208%20L34%2024%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E';
-
-const IMAGES = Array.from({ length: 9 }, (_, i) => ({
-  id: i,
-  src: PLACEHOLDER_SRC,
-  alt: 'VibeNet preview',
-}));
+const IMAGES = [
+  { id: 1, src: '/gallery/g1.jpg', alt: 'Flowing gradient of violet, blue, and cyan' },
+  { id: 2, src: '/gallery/g2.jpg', alt: 'Glowing low-poly geometric pattern' },
+  { id: 3, src: '/gallery/g3.jpg', alt: 'Red and blue ink swirling through water' },
+  { id: 4, src: '/gallery/g4.jpg', alt: 'Smooth indigo-to-magenta gradient' },
+  { id: 5, src: '/gallery/g5.jpg', alt: 'Rainbow-lit architectural corridor' },
+  { id: 6, src: '/gallery/g6.jpg', alt: 'Calm teal-to-blue gradient' },
+  { id: 7, src: '/gallery/g7.jpg', alt: 'Deep blue and red light gradient' },
+  { id: 8, src: '/gallery/g8.jpg', alt: 'Soft rainbow pastel gradient' },
+  { id: 9, src: '/gallery/g9.jpg', alt: 'Cobalt-blue liquid abstract' },
+];
 
 // ─── Stat Block ─────────────────────────────────────────────────────────────
 
 function StatBlock({ value, label }: { value: string; label: string }) {
   return (
-    <VStack gap={0}>
-      <Text type="large" weight="bold">
+    <div className="flex flex-col">
+      <Text type="large" weight="bold" className="vibe-gradient-text">
         {value}
       </Text>
       <Text type="supporting" color="secondary">
         {label}
       </Text>
-    </VStack>
+    </div>
   );
 }
 
@@ -66,13 +51,20 @@ function StatBlock({ value, label }: { value: string; label: string }) {
 
 function ImageGrid() {
   return (
-    <Grid columns={3} gap={3}>
+    <div className="grid grid-cols-3 gap-3">
       {IMAGES.map((img) => (
-        <AspectRatio key={img.id} ratio={1} style={imageClip}>
-          <img src={img.src} alt={img.alt} style={imageStyle} />
-        </AspectRatio>
+        <div
+          key={img.id}
+          className="vibe-tile aspect-square overflow-hidden rounded-[var(--radius-element)]"
+        >
+          <img
+            src={img.src}
+            alt={img.alt}
+            className="h-full w-full object-cover"
+          />
+        </div>
       ))}
-    </Grid>
+    </div>
   );
 }
 
@@ -82,62 +74,62 @@ export default function Home() {
   const router = useRouter();
 
   return (
-    <Layout
-      height="auto"
-      contentWidth={1400}
-      content={
-        <LayoutContent padding={6}>
-          <Grid
-            columns={{ minWidth: 360, repeat: 'fit' }}
-            gap={8}
-            align="center"
-          >
-            {/* Left side: Brand, description, and auth CTAs */}
-            <VStack gap={6} vAlign="center">
-              <VStack gap={3}>
-                <Text type="supporting" color="secondary" weight="semibold">
-                  END-TO-END ENCRYPTED
-                </Text>
-                <Heading level={1}>VibeNet</Heading>
-                <Text type="body" color="secondary">
-                  Secure, real-time end-to-end encrypted chat. Your
-                  conversations are encrypted on your device and never leave it
-                  in the clear — not to the network, not to our servers, not to
-                  anyone but the people you talk to.
-                </Text>
-              </VStack>
+    <main className="mx-auto w-full max-w-7xl flex-1 px-6 pt-24 pb-16 md:pt-32 lg:px-8">
+      <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+        {/* Left: brand, description, and auth CTAs */}
+        <div className="flex flex-col gap-6">
+          {/* Brand wordmark doubles as the page's h1 (alt = "VibeNet"). */}
+          <h1 className="vibe-logo">
+            <img
+              src="/logo/vibenet-logo.png"
+              alt="VibeNet"
+              width={1787}
+              height={521}
+              className="h-auto w-24 sm:w-28 md:w-32"
+            />
+          </h1>
 
-              {/* Auth CTAs — ready to point at the auth routes as they ship. */}
-              <HStack gap={3} vAlign="center">
-                <Button
-                  label="Register"
-                  variant="primary"
-                  size="lg"
-                  onClick={() => router.push('/register')}
-                />
-                <Button
-                  label="Login"
-                  variant="secondary"
-                  size="lg"
-                  onClick={() => router.push('/login')}
-                />
-              </HStack>
+          <div className="flex flex-col gap-3">
+            <Text type="supporting" weight="semibold" className="vibe-eyebrow">
+              END-TO-END ENCRYPTED
+            </Text>
+            <Text type="body" color="secondary">
+              Secure, real-time end-to-end encrypted chat. Your conversations are
+              encrypted on your device and never leave it in the clear — not to
+              the network, not to our servers, not to anyone but the people you
+              talk to.
+            </Text>
+          </div>
 
-              <VStack gap={4}>
-                <Divider />
-                <HStack gap={6}>
-                  <StatBlock value="E2EE" label="By default" />
-                  <StatBlock value="Real-time" label="Messaging" />
-                  <StatBlock value="Zero-knowledge" label="Servers" />
-                </HStack>
-              </VStack>
-            </VStack>
+          {/* Auth CTAs — ready to point at the auth routes as they ship. */}
+          <div className="vibe-cta flex flex-wrap items-center gap-3">
+            <Button
+              label="Register"
+              variant="primary"
+              size="lg"
+              onClick={() => router.push('/register')}
+            />
+            <Button
+              label="Login"
+              variant="secondary"
+              size="lg"
+              onClick={() => router.push('/login')}
+            />
+          </div>
 
-            {/* Right side: Image collage */}
-            <ImageGrid />
-          </Grid>
-        </LayoutContent>
-      }
-    />
+          <div className="flex flex-col gap-4">
+            <Divider />
+            <div className="flex flex-wrap gap-6">
+              <StatBlock value="E2EE" label="By default" />
+              <StatBlock value="Real-time" label="Messaging" />
+              <StatBlock value="Zero-knowledge" label="Servers" />
+            </div>
+          </div>
+        </div>
+
+        {/* Right: image collage */}
+        <ImageGrid />
+      </div>
+    </main>
   );
 }
