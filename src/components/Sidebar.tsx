@@ -1,23 +1,23 @@
 // VibeNet — Dashboard sidebar: brand, chat navigation, direct-message list,
 // and account utilities (chat PIN, settings, profile, sign out).
 //
-// The DM list is placeholder data for now; it becomes live once the /ws
-// message hub + contacts sync land.
+// The DM list is real — sourced from the client-side conversation registry
+// (src/lib/conversations.ts) — but presence is not: the backend has no
+// online/offline broadcast, so every conversation shows a neutral "Offline"
+// dot until that's wired up. Faking green dots for accounts with no real
+// presence data would be misleading.
 
 'use client';
 
-import { useState } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Divider } from '@astryxdesign/core/Divider';
-import { MoreMenu } from '@astryxdesign/core/MoreMenu';
 import {
   SideNav,
   SideNavItem,
   SideNavSection,
 } from '@astryxdesign/core/SideNav';
-import { Stack, VStack } from '@astryxdesign/core/Stack';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
-import type { StatusDotVariant } from '@astryxdesign/core/StatusDot';
+import { Text } from '@astryxdesign/core/Text';
 import {
   ArrowRightStartOnRectangleIcon,
   Cog6ToothIcon,
@@ -27,67 +27,21 @@ import {
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import type { AuthUser } from '@/lib/api';
-
-type Conversation = {
-  label: string;
-  presence: StatusDotVariant;
-  presenceLabel: string;
-};
-
-// Placeholder DMs until the contacts + WebSocket message flow is wired in.
-const DIRECT_MESSAGES: Conversation[] = [
-  { label: 'sarah_dev', presence: 'success', presenceLabel: 'Online' },
-  { label: 'kasun_92', presence: 'warning', presenceLabel: 'Away' },
-  { label: 'design_crew', presence: 'success', presenceLabel: 'Online' },
-  { label: 'nadeesha', presence: 'neutral', presenceLabel: 'Offline' },
-];
-
-function ConversationItem({
-  label,
-  presence,
-  presenceLabel,
-  isSelected,
-}: Conversation & { isSelected?: boolean }) {
-  const [isHovered, setIsHovered] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const showMenu = isHovered || isMenuOpen;
-
-  return (
-    <Stack
-      onMouseEnter={() => setIsHovered(true)}
-      onMouseLeave={() => setIsHovered(false)}>
-      <SideNavItem
-        label={label}
-        icon={<Avatar name={label} size="tiny" />}
-        href="#"
-        isSelected={isSelected}
-        endContent={
-          showMenu ? (
-            <MoreMenu
-              size="sm"
-              label="Conversation options"
-              onOpenChange={setIsMenuOpen}
-              items={[
-                { label: 'Pin conversation', onClick: () => {} },
-                { label: 'Mark as read', onClick: () => {} },
-                { label: 'Clear history', onClick: () => {} },
-                { label: 'Delete chat', onClick: () => {} },
-              ]}
-            />
-          ) : (
-            <StatusDot variant={presence} label={presenceLabel} />
-          )
-        }
-      />
-    </Stack>
-  );
-}
+import type { Conversation } from '@/lib/conversations';
 
 export function Sidebar({
   user,
+  conversations,
+  activePeerId,
+  onSelectConversation,
+  onNewChat,
   onLogout,
 }: {
   user: AuthUser | null;
+  conversations: Conversation[];
+  activePeerId: string | null;
+  onSelectConversation: (peerId: string) => void;
+  onNewChat: () => void;
   onLogout: () => void;
 }) {
   return (
@@ -125,17 +79,32 @@ export function Sidebar({
         </SideNavSection>
       }>
       <SideNavSection title="Menu" isHeaderHidden>
-        <SideNavItem label="New chat" icon={PlusIcon} href="#" />
-        <SideNavItem label="Find people" icon={MagnifyingGlassIcon} href="#" />
+        <SideNavItem label="New chat" icon={PlusIcon} onClick={onNewChat} />
+        <SideNavItem
+          label="Find people"
+          icon={MagnifyingGlassIcon}
+          onClick={onNewChat}
+        />
         <SideNavItem label="Contacts" icon={UsersIcon} href="#" />
       </SideNavSection>
       <Divider />
       <SideNavSection title="Direct messages">
-        <VStack gap={0.5}>
-          {DIRECT_MESSAGES.map(chat => (
-            <ConversationItem key={chat.label} {...chat} />
-          ))}
-        </VStack>
+        {conversations.length === 0 ? (
+          <Text type="supporting" color="secondary" className="px-3 py-2">
+            No conversations yet — start one from &ldquo;New chat&rdquo;.
+          </Text>
+        ) : (
+          conversations.map((conversation) => (
+            <SideNavItem
+              key={conversation.peerId}
+              label={conversation.peerUsername}
+              icon={<Avatar name={conversation.peerUsername} size="tiny" />}
+              isSelected={conversation.peerId === activePeerId}
+              onClick={() => onSelectConversation(conversation.peerId)}
+              endContent={<StatusDot variant="neutral" label="Offline" />}
+            />
+          ))
+        )}
       </SideNavSection>
     </SideNav>
   );
