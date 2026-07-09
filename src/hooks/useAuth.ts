@@ -38,7 +38,7 @@ export function useAuth() {
   function logout() {
     clearSession();
     gooeyToast('Signed out.', { description: 'Your session on this device was cleared.' });
-    router.replace('/login');
+    router.replace('/');
   }
 
   return { ...state, logout };
