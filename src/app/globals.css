@@ -157,17 +157,6 @@ body {
   text-decoration: underline;
 }
 
-/* Form-level error banner. */
-.vibe-alert {
-  border: 1px solid rgba(220, 38, 38, 0.25);
-  background: rgba(254, 226, 226, 0.6);
-  color: #b91c1c;
-  border-radius: var(--radius-element);
-  padding: 10px 14px;
-  font-size: 0.875rem;
-  line-height: 1.4;
-}
-
 .vibe-auth-footer {
   padding-top: 2px;
 }

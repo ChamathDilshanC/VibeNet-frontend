@@ -11,6 +11,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { gooeyToast } from 'goey-toast';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Text } from '@astryxdesign/core/Text';
@@ -26,7 +27,6 @@ export default function RegisterPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   // Field-level validation shown inline under the password inputs.
@@ -41,19 +41,18 @@ export default function RegisterPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
 
     const name = username.trim();
     if (!name || !password || !confirm) {
-      setError('Fill in every field to continue.');
+      gooeyToast.warning('Fill in every field to continue.');
       return;
     }
     if (password.length < MIN_PASSWORD) {
-      setError(`Password must be at least ${MIN_PASSWORD} characters.`);
+      gooeyToast.warning(`Password must be at least ${MIN_PASSWORD} characters.`);
       return;
     }
     if (password !== confirm) {
-      setError('Passwords do not match.');
+      gooeyToast.warning('Passwords do not match.');
       return;
     }
 
@@ -66,9 +65,12 @@ export default function RegisterPage() {
       // 3. Persist the private key and the new session, then continue.
       storePrivateKey(result.user.username, keys.privateKeyJwk);
       saveSession(result);
+      gooeyToast.success('Account created — your keys are on this device.');
       router.push('/dashboard');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
+      gooeyToast.error(
+        err instanceof ApiError ? err.message : 'Something went wrong. Please try again.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -88,12 +90,6 @@ export default function RegisterPage() {
       }
     >
       <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
-        {error && (
-          <div className="vibe-alert" role="alert">
-            {error}
-          </div>
-        )}
-
         <TextInput
           type="text"
           label="Username"

@@ -9,6 +9,7 @@
 import { useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { gooeyToast } from 'goey-toast';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Text } from '@astryxdesign/core/Text';
@@ -20,15 +21,13 @@ export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    setError(null);
 
     if (!username.trim() || !password) {
-      setError('Enter your username and password.');
+      gooeyToast.warning('Enter your username and password.');
       return;
     }
 
@@ -36,9 +35,12 @@ export default function LoginPage() {
     try {
       const result = await login({ username: username.trim(), password });
       saveSession(result);
+      gooeyToast.success(`Welcome back, ${result.user.username}!`);
       router.push('/dashboard');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
+      gooeyToast.error(
+        err instanceof ApiError ? err.message : 'Something went wrong. Please try again.',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -58,12 +60,6 @@ export default function LoginPage() {
       }
     >
       <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
-        {error && (
-          <div className="vibe-alert" role="alert">
-            {error}
-          </div>
-        )}
-
         <TextInput
           type="text"
           label="Username"

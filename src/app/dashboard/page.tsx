@@ -8,6 +8,7 @@
 
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { gooeyToast } from 'goey-toast';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Text } from '@astryxdesign/core/Text';
 import { Button } from '@astryxdesign/core/Button';
@@ -32,6 +33,7 @@ export default function DashboardPage() {
 
   function handleLogout() {
     clearSession();
+    gooeyToast('Signed out.', { description: 'Your session on this device was cleared.' });
     router.replace('/login');
   }
 
