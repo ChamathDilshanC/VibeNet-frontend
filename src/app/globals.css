@@ -172,6 +172,24 @@ body {
   padding-top: 2px;
 }
 
+/* ─── Dashboard ──────────────────────────────────────────────────────────── */
+
+/* Empty-state panel shown before any conversations exist. */
+.vibe-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 56px 24px;
+  border: 1px dashed var(--color-border);
+  border-radius: var(--radius-element);
+  background:
+    radial-gradient(600px 200px at 50% 0%, rgba(56, 181, 255, 0.06), transparent 70%),
+    rgba(255, 255, 255, 0.4);
+}
+
 /* Global footer. */
 .vibe-footer {
   margin-top: auto; /* pin to the bottom when page content is short */

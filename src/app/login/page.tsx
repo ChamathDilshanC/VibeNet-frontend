@@ -36,7 +36,7 @@ export default function LoginPage() {
     try {
       const result = await login({ username: username.trim(), password });
       saveSession(result);
-      router.push('/');
+      router.push('/dashboard');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
     } finally {

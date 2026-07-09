@@ -66,7 +66,7 @@ export default function RegisterPage() {
       // 3. Persist the private key and the new session, then continue.
       storePrivateKey(result.user.username, keys.privateKeyJwk);
       saveSession(result);
-      router.push('/');
+      router.push('/dashboard');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Something went wrong. Please try again.');
     } finally {
