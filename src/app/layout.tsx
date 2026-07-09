@@ -3,25 +3,17 @@
 // Responsibilities:
 //   - Load global styles (Tailwind + Astryx reset/core/theme).
 //   - Activate the Astryx "neutral" theme via the `data-astryx-theme` attribute
-//     on <html>, so every Astryx component resolves its design tokens.
-//   - Register the app fonts and expose base document metadata.
+//     on <html>, so every Astryx component resolves its design tokens —
+//     including typography (Figtree, via --font-family-body/-heading in
+//     theme-neutral/theme.css). Fonts are the theme's responsibility; the app
+//     doesn't load any of its own.
+//   - Expose base document metadata.
 
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import "goey-toast/styles.css";
 import { Footer } from "@/components/Footer";
 import { Toaster } from "@/components/Toaster";
-
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
-  subsets: ["latin"],
-});
 
 export const metadata: Metadata = {
   title: "VibeNet — Secure, Real-time E2EE Chat",
@@ -38,7 +30,7 @@ export default function RootLayout({
     <html
       lang="en"
       data-astryx-theme="neutral"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className="h-full antialiased"
     >
       <body className="min-h-full flex flex-col">
         {children}
