@@ -8,7 +8,7 @@
 
 'use client';
 
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppShell } from '@astryxdesign/core/AppShell';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Layout, LayoutContent } from '@astryxdesign/core/Layout';
@@ -24,7 +24,7 @@ import {
   type Conversation,
 } from '@/lib/conversations';
 import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
-import { appendMessage, getMessages, type ChatMessage } from '@/lib/messageStore';
+import { appendMessage, getMessages, mergeMessages, type ChatMessage } from '@/lib/messageStore';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
@@ -36,6 +36,14 @@ interface InboundFrame {
   message_id: string;
   sender_id: string;
   chat_room_id: string;
+  ciphertext: string;
+  nonce: string;
+  timestamp: number;
+}
+
+interface RemoteMessageDTO {
+  message_id: string;
+  sender_id: string;
   ciphertext: string;
   nonce: string;
   timestamp: number;
@@ -77,6 +85,46 @@ export function DashboardShell({
       return shared;
     },
     [keyState],
+  );
+
+  // Catches a conversation up on anything sent while this device wasn't
+  // connected — the WS hub only delivers live, with no queue (see
+  // GetChatHistory on the backend). Best-effort: a failed fetch just means
+  // live delivery keeps working without the catch-up.
+  const syncHistory = useCallback(
+    async (conversation: Conversation) => {
+      try {
+        const sharedKey = await getSharedKey(conversation);
+        if (!sharedKey) return;
+
+        const { messages: remote } = await apiClient.get<{ messages: RemoteMessageDTO[] }>(
+          `/api/messages/${encodeURIComponent(conversation.chatRoomId)}`,
+        );
+        if (remote.length === 0) return;
+
+        const decrypted: ChatMessage[] = [];
+        for (const m of remote) {
+          try {
+            const text = await decryptText(sharedKey, m.ciphertext, m.nonce);
+            decrypted.push({
+              id: m.message_id,
+              senderId: m.sender_id,
+              text,
+              timestamp: m.timestamp,
+            });
+          } catch {
+            // Skip anything that fails to decrypt (e.g. sent under a rotated key).
+          }
+        }
+        if (decrypted.length === 0) return;
+
+        const merged = mergeMessages(conversation.chatRoomId, decrypted);
+        setMessagesByRoom((prev) => ({ ...prev, [conversation.chatRoomId]: merged }));
+      } catch {
+        // Network/auth failure — live delivery still works without history.
+      }
+    },
+    [getSharedKey],
   );
 
   function recordMessage(chatRoomId: string, message: ChatMessage) {
@@ -165,7 +213,20 @@ export function DashboardShell({
         ? prev
         : { ...prev, [conversation.chatRoomId]: getMessages(conversation.chatRoomId) },
     );
+    // History sync runs from the effect below, keyed off activePeerId — not
+    // called directly here too, so opening a conversation only fetches once.
   }
+
+  // Fetches history whenever the active conversation changes (new chat
+  // started, or an existing one selected from the sidebar) and again if the
+  // connection drops and reconnects while a conversation is open — otherwise
+  // anything sent during the gap would only show up on the next full reload.
+  useEffect(() => {
+    if (connectionStatus !== 'open' || !activePeerId) return;
+    const conversation = conversations.find((c) => c.peerId === activePeerId);
+    if (conversation) void syncHistory(conversation);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on reconnect only; re-running for every unrelated `conversations`/`syncHistory` identity change would be wasteful, not incorrect.
+  }, [connectionStatus, activePeerId]);
 
   async function handleSend(text: string) {
     if (!user) return;

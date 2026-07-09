@@ -95,7 +95,7 @@ export function ChatView({
               return (
                 <HStack key={message.id} hAlign={isMine ? 'end' : 'start'}>
                   <Card
-                    variant={isMine ? 'blue' : 'muted'}
+                    variant={isMine ? 'blue' : 'default'}
                     padding={3}
                     maxWidth="70%">
                     <Text type="body">{message.text}</Text>
