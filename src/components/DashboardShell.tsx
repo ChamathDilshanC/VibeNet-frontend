@@ -24,7 +24,7 @@ import {
   type Conversation,
 } from '@/lib/conversations';
 import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
-import { appendMessage, getMessages, mergeMessages, type ChatMessage } from '@/lib/messageStore';
+import { getMessages, mergeMessages, type ChatMessage } from '@/lib/messageStore';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
@@ -127,12 +127,12 @@ export function DashboardShell({
     [getSharedKey],
   );
 
+  // Goes through mergeMessages (dedupe by id) rather than a blind append —
+  // the same message can otherwise land twice: once live over the
+  // WebSocket, once again from a history sync a moment later.
   function recordMessage(chatRoomId: string, message: ChatMessage) {
-    appendMessage(chatRoomId, message);
-    setMessagesByRoom((prev) => ({
-      ...prev,
-      [chatRoomId]: [...(prev[chatRoomId] ?? getMessages(chatRoomId)), message],
-    }));
+    const merged = mergeMessages(chatRoomId, [message]);
+    setMessagesByRoom((prev) => ({ ...prev, [chatRoomId]: merged }));
   }
 
   const handleIncoming = useCallback(

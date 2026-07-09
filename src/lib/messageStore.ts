@@ -32,13 +32,6 @@ export function getMessages(chatRoomId: string): ChatMessage[] {
   }
 }
 
-export function appendMessage(chatRoomId: string, message: ChatMessage): ChatMessage[] {
-  if (typeof window === 'undefined') return [];
-  const next = [...getMessages(chatRoomId), message];
-  window.localStorage.setItem(storageKey(chatRoomId), JSON.stringify(next));
-  return next;
-}
-
 // mergeMessages folds freshly-decrypted history (e.g. from GET /api/messages)
 // into the local cache, de-duplicating by id against what's already there —
 // the same message can otherwise arrive twice: once live over the WebSocket,
