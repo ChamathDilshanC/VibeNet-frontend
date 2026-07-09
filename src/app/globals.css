@@ -1,0 +1,23 @@
+/*
+ * Global stylesheet for VibeNet.
+ *
+ * Import order matters:
+ *   1. Tailwind CSS  — utility layer used by the Next.js app shell.
+ *   2. Astryx reset  — normalizes browser defaults for design-system components.
+ *   3. Astryx core   — component styles for @astryxdesign/core.
+ *   4. Neutral theme — design tokens (color, spacing, radius, typography) exposed
+ *                      as CSS custom properties under [data-astryx-theme="neutral"].
+ *
+ * The `data-astryx-theme="neutral"` attribute is applied on <html> (see layout.tsx),
+ * which activates every token consumed by the Astryx components in the app.
+ */
+@import "tailwindcss";
+@import "@astryxdesign/core/reset.css";
+@import "@astryxdesign/core/astryx.css";
+@import "@astryxdesign/theme-neutral/theme.css";
+
+/* Let the app shell fill the viewport so the landing page can center itself. */
+html,
+body {
+  min-height: 100%;
+}
