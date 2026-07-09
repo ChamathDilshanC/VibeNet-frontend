@@ -131,6 +131,7 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  gap: 10px;
   width: 100%;
   min-height: 44px;
   padding: 0 16px;
@@ -145,6 +146,9 @@ body {
 .vibe-google-btn:hover {
   background: #f8fafc;
   border-color: #22c9e6;
+}
+.vibe-google-btn__icon {
+  flex-shrink: 0;
 }
 
 /* Brand-tinted inline link. */

@@ -14,7 +14,8 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { Button } from '@astryxdesign/core/Button';
 import { Text } from '@astryxdesign/core/Text';
 import { AuthShell } from '@/components/AuthShell';
-import { login, googleLoginUrl, ApiError } from '@/lib/api';
+import { GoogleButton } from '@/components/GoogleButton';
+import { login, ApiError } from '@/lib/api';
 import { saveSession } from '@/lib/session';
 
 export default function LoginPage() {
@@ -90,9 +91,7 @@ export default function LoginPage() {
             size="lg"
             isLoading={submitting}
           />
-          <a href={googleLoginUrl()} className="vibe-google-btn">
-            Continue with Google
-          </a>
+          <GoogleButton />
         </div>
       </form>
     </AuthShell>
