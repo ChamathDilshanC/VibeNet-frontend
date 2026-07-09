@@ -117,6 +117,61 @@ body {
     var(--vibe-gradient) border-box;
 }
 
+/* ─── Auth pages (login / register) ─────────────────────────────────────── */
+
+/* Stacked CTAs on the auth forms fill the column width. Scoped so the landing
+   page's side-by-side CTAs are unaffected. */
+.vibe-cta--stack .astryx-button {
+  width: 100%;
+  justify-content: center;
+}
+
+/* "Continue with Google" — neutral outline button matching the input chrome. */
+.vibe-google-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 44px;
+  padding: 0 16px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-element);
+  background: #ffffff;
+  color: #1f2937;
+  font-weight: 600;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.vibe-google-btn:hover {
+  background: #f8fafc;
+  border-color: #22c9e6;
+}
+
+/* Brand-tinted inline link. */
+.vibe-link {
+  color: #0284c7;
+  font-weight: 600;
+  text-decoration: none;
+}
+.vibe-link:hover {
+  text-decoration: underline;
+}
+
+/* Form-level error banner. */
+.vibe-alert {
+  border: 1px solid rgba(220, 38, 38, 0.25);
+  background: rgba(254, 226, 226, 0.6);
+  color: #b91c1c;
+  border-radius: var(--radius-element);
+  padding: 10px 14px;
+  font-size: 0.875rem;
+  line-height: 1.4;
+}
+
+.vibe-auth-footer {
+  padding-top: 2px;
+}
+
 /* Global footer. */
 .vibe-footer {
   margin-top: auto; /* pin to the bottom when page content is short */
