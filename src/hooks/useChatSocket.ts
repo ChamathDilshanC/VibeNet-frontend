@@ -47,7 +47,15 @@ export function useChatSocket(onMessage: (data: unknown) => void) {
       setStatus('connecting');
 
       socket.onopen = () => {
-        if (!cancelled) setStatus('open');
+        // If cleanup already ran (React Strict Mode's dev-only mount/unmount/
+        // remount cycle, or a fast unmount) before the handshake finished, close
+        // here instead of mid-CONNECTING — closing a CONNECTING socket is what
+        // triggers the browser's "closed before connection established" warning.
+        if (cancelled) {
+          socket.close();
+          return;
+        }
+        setStatus('open');
       };
       socket.onclose = () => {
         if (cancelled) return;
@@ -71,7 +79,11 @@ export function useChatSocket(onMessage: (data: unknown) => void) {
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
-      socketRef.current?.close();
+      // Only close here if the handshake already completed — closing a socket
+      // that's still CONNECTING is deferred to the onopen handler above.
+      if (socketRef.current?.readyState === WebSocket.OPEN) {
+        socketRef.current.close();
+      }
     };
   }, []);
 
