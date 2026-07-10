@@ -1,14 +1,27 @@
 // Global site footer for VibeNet.
 //
-// Rendered once from the root layout so it appears on every page. Shows the
-// author credit (linked to GitHub) and a copyright line with the current year.
+// Rendered once from the root layout. Shows on the marketing and auth pages, but
+// hides on the full-height app shell (dashboard, settings): there a marketing
+// footer is out of place and pushes the layout past the viewport, adding a
+// scrollbar to what should be a fixed, single-screen chat UI.
 
 'use client';
 
+import { usePathname } from 'next/navigation';
 import { Text } from '@astryxdesign/core/Text';
 import { Link } from '@astryxdesign/core/Link';
 
+// Route prefixes rendered inside the full-height app shell, where the footer is
+// suppressed. Everything else (landing, /login, /register, /auth/*) keeps it.
+const APP_ROUTES = ['/dashboard', '/settings'];
+
 export function Footer() {
+  const pathname = usePathname();
+  const isAppRoute = APP_ROUTES.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`),
+  );
+  if (isAppRoute) return null;
+
   const year = new Date().getFullYear();
 
   return (

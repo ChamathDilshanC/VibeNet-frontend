@@ -48,6 +48,7 @@ export function Sidebar({
 }) {
   return (
     <SideNav
+      className="vibe-sidenav"
       collapsible
       resizable={{ defaultWidth: 300, minWidth: 220, maxWidth: 420 }}
       header={

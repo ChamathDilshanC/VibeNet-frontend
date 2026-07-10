@@ -20,6 +20,20 @@
 html,
 body {
   min-height: 100%;
+  /* The app never scrolls horizontally as a whole — wide content (tables, the
+   * chat, the resize handle) scrolls inside its own container. `clip` removes the
+   * stray page-level horizontal scrollbar without establishing a scroll
+   * container, so sticky positioning inside the sidebar keeps working. */
+  overflow-x: clip;
+}
+
+/* Widen the collapsed side-nav rail. The design system collapses it to
+ * --spacing-12 (48px), which is cramped for the account icons; give it a bit
+ * more room. The collapsed nav carries no inline width (the resizable handle,
+ * and its inline `width`, only render while expanded), so this rule targets the
+ * collapsed state only and leaves the resizable expanded width untouched. */
+.vibe-sidenav:not([style*="width"]) {
+  width: 72px !important;
 }
 
 /*

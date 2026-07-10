@@ -147,6 +147,27 @@ export function DashboardShell({
     [],
   );
 
+  // Proactively backfill peer avatars so the DM list shows profile photos
+  // without the user having to open each chat first. syncPeerPublicKey caches
+  // the avatar_url the key endpoint returns into the conversation. Each peer is
+  // attempted at most once per mount — password accounts have no avatar and
+  // would otherwise be refetched on every conversation-list change.
+  const avatarBackfillAttempted = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!user) return;
+    const pending = conversations.filter(
+      (c) => c.peerAvatarUrl === undefined && !avatarBackfillAttempted.current.has(c.peerId),
+    );
+    if (pending.length === 0) return;
+    const currentUserId = user.user_id;
+    pending.forEach((c) => avatarBackfillAttempted.current.add(c.peerId));
+    void (async () => {
+      for (const c of pending) {
+        await syncPeerPublicKey(c, currentUserId);
+      }
+    })();
+  }, [user, conversations, syncPeerPublicKey]);
+
   // Re-fetches a peer's current public key, refreshes the cached conversation
   // entry (and busts the cached derived shared key) when it turns out to
   // differ from what we had cached — e.g. they lost their local private key
