@@ -67,11 +67,13 @@ export function Sidebar({
       footer={
         <SideNavSection title="Account" isHeaderHidden>
           <SideNavItem label="Chat PIN" icon={ShieldCheckIcon} href="#" />
-          <SideNavItem label="Settings" icon={Cog6ToothIcon} href="#" />
+          <SideNavItem label="Settings" icon={Cog6ToothIcon} href="/settings" />
           <SideNavItem
             label={user?.username ?? 'Account'}
-            icon={<Avatar name={user?.username} size="tiny" />}
-            href="#"
+            icon={
+              <Avatar src={user?.avatar_url} name={user?.username} size="tiny" />
+            }
+            href="/settings"
           />
           <SideNavItem
             label="Log out"

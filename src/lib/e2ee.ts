@@ -52,19 +52,41 @@ export async function generateKeyPair(): Promise<GeneratedKeys> {
   return { publicKey: bufferToBase64(spki), privateKeyJwk };
 }
 
-// storePrivateKey persists the private key locally, namespaced by username so a
+// storePrivateKey persists the private key locally, namespaced by user_id so a
 // device can hold keys for more than one account.
-export function storePrivateKey(username: string, jwk: JsonWebKey): void {
+//
+// Keyed by user_id rather than username on purpose: usernames are editable (see
+// the profile settings page), and an account that renamed itself would otherwise
+// stop finding its own key — useE2EEKeys would treat that as key loss, mint a
+// fresh keypair, publish it, and leave every earlier message undecryptable.
+export function storePrivateKey(userId: string, jwk: JsonWebKey): void {
   if (typeof window === 'undefined') return;
   const store = readStore();
-  store[username] = jwk;
+  store[userId] = jwk;
   window.localStorage.setItem(PRIVATE_KEY_STORAGE, JSON.stringify(store));
 }
 
 // getPrivateKeyJwk returns the locally stored private key for an account, or
 // null if this device has never generated (or has lost) one.
-export function getPrivateKeyJwk(username: string): JsonWebKey | null {
-  return readStore()[username] ?? null;
+//
+// `legacyUsername` migrates the entries written before this store was keyed by
+// user_id: the key is moved under the user_id and the old entry dropped. Without
+// it, everyone with an existing session would look like they'd lost their key.
+export function getPrivateKeyJwk(userId: string, legacyUsername?: string): JsonWebKey | null {
+  const store = readStore();
+  const current = store[userId];
+  if (current) return current;
+
+  if (!legacyUsername) return null;
+  const legacy = store[legacyUsername];
+  if (!legacy) return null;
+
+  delete store[legacyUsername];
+  store[userId] = legacy;
+  if (typeof window !== 'undefined') {
+    window.localStorage.setItem(PRIVATE_KEY_STORAGE, JSON.stringify(store));
+  }
+  return legacy;
 }
 
 function readStore(): Record<string, JsonWebKey> {

@@ -64,7 +64,7 @@ export default function RegisterPage() {
       // 2. Register with the public key.
       const result = await register({ username: name, password, publicKey: keys.publicKey });
       // 3. Persist the private key and the new session, then continue.
-      storePrivateKey(result.user.username, keys.privateKeyJwk);
+      storePrivateKey(result.user.user_id, keys.privateKeyJwk);
       saveSession(result);
       gooeyToast.success('Account created — your keys are on this device.');
       router.push('/dashboard');

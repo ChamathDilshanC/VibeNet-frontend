@@ -1,21 +1,23 @@
 // Client-side auth guard for pages that require a signed-in session.
 //
-// Reads the session saved at login/OAuth time (see lib/session.ts) — the
-// user record there already came from the backend's auth response or was
-// decoded from the issued JWT, so this avoids a redundant round trip.
-// The backend doesn't expose a live `/api/user/me` endpoint yet; once it
-// does, this is the place to refresh `user` from `apiClient.get(...)`.
+// Hydrates immediately from the session saved at login/OAuth time (see
+// lib/session.ts) so protected pages render without waiting on the network,
+// then refreshes from GET /api/user/me in the background. That refresh is what
+// surfaces fields the JWT never carried — the Google `avatar_url` — and picks up
+// a username changed from settings or another device.
 //
-// Redirects to /login when no token is present. `ready` stays false until
-// the guard has resolved, so callers can avoid flashing protected content.
+// Redirects to /login when no token is present, or when the server rejects the
+// stored token as expired/invalid. `ready` stays false until the guard has
+// resolved, so callers can avoid flashing protected content.
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { gooeyToast } from 'goey-toast';
-import { getToken, getUser, clearSession } from '@/lib/session';
-import type { AuthUser } from '@/lib/api';
+import { getToken, getUser, saveUser, clearSession } from '@/lib/session';
+import { fetchMe } from '@/lib/user';
+import { ApiError, type AuthUser } from '@/lib/api';
 
 type AuthState =
   | { ready: false; user: null }
@@ -33,7 +35,37 @@ export function useAuth() {
       return;
     }
     setState({ ready: true, user: getUser() });
+
+    let cancelled = false;
+    void (async () => {
+      try {
+        const fresh = await fetchMe();
+        if (cancelled) return;
+        saveUser(fresh);
+        setState({ ready: true, user: fresh });
+      } catch (err) {
+        if (cancelled) return;
+        // An expired or revoked token can't be recovered from — send them back
+        // to /login rather than leaving a half-authenticated page up. Any other
+        // failure (backend down, offline) keeps the cached session usable.
+        if (err instanceof ApiError && err.status === 401) {
+          clearSession();
+          router.replace('/login');
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [router]);
+
+  // Applies a profile the caller just persisted server-side (settings page), so
+  // the stored session and every mounted useAuth agree without a reload.
+  const updateUser = useCallback((user: AuthUser) => {
+    saveUser(user);
+    setState({ ready: true, user });
+  }, []);
 
   function logout() {
     clearSession();
@@ -41,5 +73,5 @@ export function useAuth() {
     router.replace('/');
   }
 
-  return { ...state, logout };
+  return { ...state, logout, updateUser };
 }

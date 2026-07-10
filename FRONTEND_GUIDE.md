@@ -29,10 +29,11 @@ through [`src/lib/session.ts`](src/lib/session.ts) — nothing else should touch
 | Key | Contents |
 | --- | --- |
 | `vibenet:auth:token` | The signed JWT returned by the backend (`/api/auth/login`, `/api/auth/register`, or the Google OAuth callback) |
-| `vibenet:auth:user` | The `AuthUser` JSON the backend returned alongside the token (`user_id`, `username`, optional `email`/`public_key`) |
+| `vibenet:auth:user` | The `AuthUser` JSON the backend returned alongside the token (`user_id`, `username`, optional `email`/`public_key`/`avatar_url`) |
 
 ```ts
 saveSession({ token, user })   // called once, right after a successful auth response
+saveUser(user)                 // replace the stored user only (profile refresh / settings edit)
 getToken(): string | null      // read anywhere a request needs Authorization: Bearer <token>
 getUser(): AuthUser | null     // read for display (username, etc.) — no network call
 clearSession(): void           // logout
@@ -50,13 +51,18 @@ protected page (currently `/dashboard`):
 
 - On mount, checks `getToken()`. No token → `router.replace('/login')`.
 - With a token, hydrates `{ ready: true, user: getUser() }` from the saved
-  session (no network round trip — the user record already came from the
-  auth response or was decoded from the JWT at OAuth callback time).
+  session so protected pages render without waiting on the network.
+- Then refreshes in the background from `GET /api/user/me` and re-persists the
+  result. This is what surfaces fields the JWT never carried — the Google
+  `avatar_url` — and picks up a username changed from `/settings` or another
+  device. A `401` clears the session and redirects; any other failure leaves
+  the cached session usable.
 - Exposes `logout()`, which clears the session and sends the user to `/`
-  (the marketing/landing page, which carries the Login/Register CTAs).
+  (the marketing/landing page, which carries the Login/Register CTAs), and
+  `updateUser(user)` for pages that just persisted a profile change.
 
 ```tsx
-const { user, ready, logout } = useAuth();
+const { user, ready, logout, updateUser } = useAuth();
 if (!ready) return null; // avoid a flash of protected content pre-hydration
 ```
 
@@ -75,8 +81,10 @@ apiClient.put('/api/user/settings/pin-toggle', { enabled: true })
 ```
 
 It's the intended home for every authenticated call going forward (contacts,
-search, PIN settings, the eventual `/api/user/me`). The plain, unauthenticated
-`register`/`login`/`googleLoginUrl` calls in `src/lib/api.ts` are unaffected.
+search, PIN settings). Calls for the signed-in user's own profile
+(`GET /api/user/me`, `PUT /api/user/profile`) live in `src/lib/user.ts`. The
+plain, unauthenticated `register`/`login`/`googleLoginUrl` calls in
+`src/lib/api.ts` are unaffected.
 
 ## E2EE Security Flow
 
@@ -95,8 +103,15 @@ Key generation and storage lives in [`src/lib/e2ee.ts`](src/lib/e2ee.ts):
    backend as `public_key` — this is what other users fetch (`GET
    /api/users/{id}/key`) to encrypt messages to this account.
 3. The **private key** is exported as a JWK and stored locally via
-   `storePrivateKey(username, jwk)`, namespaced per-username under the
+   `storePrivateKey(userId, jwk)`, namespaced per-`user_id` under the
    `vibenet:e2ee:privateKey` localStorage key. **It never leaves the device.**
+
+   > Namespaced by `user_id`, not username: usernames are editable from
+   > `/settings`, and a renamed account would otherwise fail to find its own
+   > key — `useE2EEKeys` would read that as key loss, mint and publish a fresh
+   > keypair, and leave every earlier message undecryptable. `getPrivateKeyJwk`
+   > takes an optional `legacyUsername` that migrates entries written before
+   > this, moving them under the `user_id` and dropping the old entry.
 
 ```
 Register ──▶ generateKeyPair() ──▶ POST /api/auth/register { public_key }
@@ -133,6 +148,7 @@ src/
 │   ├── login/page.tsx          # Password login form
 │   ├── register/page.tsx       # Password registration — generates the E2EE keypair
 │   ├── dashboard/page.tsx      # Protected: useAuth() guard + <DashboardShell/>
+│   ├── settings/page.tsx       # Protected: tabbed account settings — Profile (avatar + username)
 │   └── auth/
 │       ├── callback/page.tsx        # Legacy Google OAuth landing (fragment-based)
 │       └── google-success/page.tsx  # Current Google OAuth landing (query-based)
@@ -152,6 +168,7 @@ src/
 └── lib/
     ├── api.ts                   # Unauthenticated REST calls (register, login, googleLoginUrl)
     ├── apiClient.ts             # Bearer-token-attached fetch wrapper for authenticated calls
+    ├── user.ts                   # The signed-in user's own profile (fetchMe, updateProfile)
     ├── session.ts                # localStorage accessors for the JWT + user (single source of truth)
     └── e2ee.ts                   # WebCrypto ECDH P-256 keypair generation + local private-key storage
 ```

@@ -15,6 +15,9 @@ export interface AuthUser {
   username: string;
   email?: string;
   public_key?: string;
+  /** Google account photo, re-synced by the backend on each Google sign-in.
+   *  Absent for password accounts, which render initials instead. */
+  avatar_url?: string;
 }
 
 export interface AuthResult {

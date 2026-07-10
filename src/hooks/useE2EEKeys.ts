@@ -30,16 +30,22 @@ type KeyState =
 export function useE2EEKeys(user: AuthUser | null) {
   const [state, setState] = useState<KeyState>({ status: 'pending' });
 
+  // Depend on the identifying fields rather than the `user` object: useAuth
+  // re-hydrates it from GET /api/user/me, and a new object identity carrying
+  // the same account must not re-run key setup.
+  const userId = user?.user_id;
+  const username = user?.username;
+
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     let cancelled = false;
 
     (async () => {
       try {
-        let jwk = getPrivateKeyJwk(user.username);
+        let jwk = getPrivateKeyJwk(userId, username);
         if (!jwk) {
           const keys = await generateKeyPair();
-          storePrivateKey(user.username, keys.privateKeyJwk);
+          storePrivateKey(userId, keys.privateKeyJwk);
           await apiClient.put('/api/user/public-key', { public_key: keys.publicKey });
           jwk = keys.privateKeyJwk;
         } else {
@@ -75,7 +81,7 @@ export function useE2EEKeys(user: AuthUser | null) {
     return () => {
       cancelled = true;
     };
-  }, [user]);
+  }, [userId, username]);
 
   return state;
 }

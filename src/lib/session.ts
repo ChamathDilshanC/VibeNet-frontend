@@ -13,6 +13,13 @@ export function saveSession(result: AuthResult): void {
   window.localStorage.setItem(USER_KEY, JSON.stringify(result.user));
 }
 
+// saveUser replaces the stored user record without touching the token — used
+// when the profile is refreshed from GET /api/user/me or edited in settings.
+export function saveUser(user: AuthUser): void {
+  if (typeof window === 'undefined') return;
+  window.localStorage.setItem(USER_KEY, JSON.stringify(user));
+}
+
 export function getToken(): string | null {
   if (typeof window === 'undefined') return null;
   return window.localStorage.getItem(TOKEN_KEY);
