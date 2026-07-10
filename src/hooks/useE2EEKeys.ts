@@ -55,9 +55,9 @@ export function useE2EEKeys(user: AuthUser | null) {
           try {
             const publicKey = await publicKeyB64FromPrivateJwk(jwk);
             await apiClient.put('/api/user/public-key', { public_key: publicKey });
-            console.log('[vibenet:e2ee] re-published public key matching the local private key');
-          } catch (err) {
-            console.warn('[vibenet:e2ee] could not re-publish public key (will retry next load)', err);
+          } catch {
+            // Best-effort: a transient failure must not block the dashboard;
+            // it self-heals on the next load.
           }
         }
         const privateKey = await importPrivateKey(jwk);

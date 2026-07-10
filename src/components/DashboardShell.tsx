@@ -76,13 +76,7 @@ export function DashboardShell({
 
   const getSharedKey = useCallback(
     async (peer: Conversation): Promise<CryptoKey | null> => {
-      if (keyState.status !== 'ready') {
-        console.warn('[vibenet:e2ee] shared key requested before local keys were ready', {
-          peerId: peer.peerId,
-          keyStatus: keyState.status,
-        });
-        return null;
-      }
+      if (keyState.status !== 'ready') return null;
       const cached = sharedKeyCache.current.get(peer.peerId);
       if (cached) return cached;
       const theirPublicKey = await importPublicKey(peer.peerPublicKey);
@@ -109,11 +103,9 @@ export function DashboardShell({
         sharedKeyCache.current.delete(conversation.peerId);
         const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
         setConversations(upsertConversation(currentUserId, refreshed));
-        console.log('[vibenet:e2ee] peer public key changed on open, refreshed cache for', conversation.peerId);
         return refreshed;
-      } catch (err) {
+      } catch {
         // Best-effort — a cached key still works if it hasn't rotated.
-        console.warn('[vibenet:e2ee] could not refresh peer public key on open for', conversation.peerId, err);
         return conversation;
       }
     },
@@ -138,27 +130,18 @@ export function DashboardShell({
         );
         if (resolved.public_key === conversation.peerPublicKey) {
           // Not a recoverable staleness case: the server already advertises the
-          // key we tried. For live messages this is worth noting; for old
-          // history it's the expected "encrypted under a lost key" case, so
-          // keep it at info level rather than error.
-          console.info(
-            '[vibenet:e2ee] peer public key on the server already matches the one we used for',
-            conversation.peerId,
-            '— nothing to refresh; this ciphertext was encrypted under a key that is gone',
-          );
+          // key we tried, so this ciphertext was encrypted under a key that is gone.
           return null;
         }
 
         sharedKeyCache.current.delete(conversation.peerId);
         const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
         setConversations(upsertConversation(currentUserId, refreshed));
-        console.log('[vibenet:e2ee] peer public key had rotated, refreshed cache for', conversation.peerId);
 
         const key = await getSharedKey(refreshed);
         if (!key) return null;
         return { key, conversation: refreshed };
-      } catch (err) {
-        console.error('[vibenet:e2ee] failed to refresh peer public key for', conversation.peerId, err);
+      } catch {
         return null;
       }
     },
@@ -182,15 +165,10 @@ export function DashboardShell({
       try {
         return await decryptText(sharedKey, ciphertext, nonce);
       } catch (err) {
-        console.warn(
-          '[vibenet:receive] decrypt failed with cached public key for',
-          conversation.peerId,
-          '— refetching their current key and retrying once',
-          err,
-        );
+        // The cached public key may be stale (peer rotated it) — refetch their
+        // current key and retry once before giving up.
         const refresh = await refreshPeerSharedKey(conversation, currentUserId);
         if (!refresh) throw err;
-        console.log('[vibenet:receive] retrying decrypt with refreshed key');
         return await decryptText(refresh.key, ciphertext, nonce);
       }
     },
@@ -253,21 +231,14 @@ export function DashboardShell({
           }
         }
 
-        const undecryptable = pending.length - decrypted.length;
-        if (undecryptable > 0) {
-          console.info(
-            `[vibenet:history] ${decrypted.length}/${pending.length} new history message(s) decrypted; ` +
-              `${undecryptable} undecryptable (encrypted under a key no longer available — expected after key loss/rotation, not a live-messaging fault).`,
-          );
-        }
-
         if (decrypted.length === 0) return;
 
         const merged = mergeMessages(conversation.chatRoomId, decrypted);
         setMessagesByRoom((prev) => ({ ...prev, [conversation.chatRoomId]: merged }));
-      } catch (err) {
+      } catch {
         // Network/auth failure — live delivery still works without history.
-        console.error('[vibenet:history] failed to sync history for', conversation.chatRoomId, err);
+        // Any messages that stay undecryptable were encrypted under a key
+        // that's no longer available, which is expected after key loss.
       }
     },
     [getSharedKey, refreshPeerSharedKey],
@@ -293,21 +264,12 @@ export function DashboardShell({
         message_id: messageId,
         timestamp,
       } = frame;
-      console.log('[vibenet:receive] frontend received frame', {
-        messageId,
-        senderId,
-        chatRoomId,
-      });
-      if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) {
-        console.error('[vibenet:receive] dropping frame — missing required fields', frame);
-        return;
-      }
+      if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) return;
 
       // Keys not generated/imported yet (fresh browser profile racing the
       // first inbound message) — queue and replay once ready instead of
       // dropping the frame for good.
       if (keyState.status !== 'ready') {
-        console.warn('[vibenet:receive] E2EE keys not ready yet, queuing frame for retry', messageId);
         pendingFramesRef.current.push(frame as InboundFrame);
         return;
       }
@@ -331,9 +293,7 @@ export function DashboardShell({
               createdAt: Date.now(),
             };
             setConversations(upsertConversation(user.user_id, conversation));
-            console.log('[vibenet:receive] auto-resolved unknown sender', senderId);
-          } catch (err) {
-            console.error('[vibenet:receive] could not resolve unknown sender', senderId, err);
+          } catch {
             gooeyToast('New encrypted message from an unknown contact.', {
               description: 'Start a chat with them from "New chat" to read it.',
             });
@@ -343,18 +303,16 @@ export function DashboardShell({
 
         try {
           const text = await decryptIncoming(conversation, ciphertext, nonce, user.user_id);
-          console.log('[vibenet:receive] decrypted message', messageId, 'from', senderId);
           recordMessage(chatRoomId, {
             id: messageId,
             senderId,
             text,
             timestamp: timestamp ?? Date.now(),
           });
-        } catch (err) {
+        } catch {
           // Undecryptable even after a key-refresh retry — genuinely
           // tampered payload or an unresolvable key mismatch. Drop rather
           // than show ciphertext.
-          console.error('[vibenet:receive] decryption failed, dropping frame', messageId, err);
         }
       })();
     },
@@ -366,7 +324,6 @@ export function DashboardShell({
     if (keyState.status !== 'ready' || pendingFramesRef.current.length === 0) return;
     const queued = pendingFramesRef.current;
     pendingFramesRef.current = [];
-    console.log('[vibenet:receive] keys now ready, replaying', queued.length, 'queued frame(s)');
     for (const frame of queued) handleIncoming(frame);
   }, [keyState.status, handleIncoming]);
 
@@ -424,11 +381,6 @@ export function DashboardShell({
       const { ciphertext, nonce } = await encryptText(sharedKey, text);
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
-      console.log('[vibenet:send] encrypted, sending over socket', {
-        messageId,
-        receiverId: conversation.peerId,
-        chatRoomId: conversation.chatRoomId,
-      });
 
       const delivered = send({
         message_id: messageId,
@@ -438,7 +390,6 @@ export function DashboardShell({
         nonce,
         timestamp,
       });
-      console.log('[vibenet:send] socket.send() returned delivered =', delivered, 'for', messageId);
       if (!delivered) throw new Error('Not connected — reconnecting, try again shortly.');
 
       recordMessage(conversation.chatRoomId, {
@@ -448,7 +399,6 @@ export function DashboardShell({
         timestamp,
       });
     } catch (err) {
-      console.error('[vibenet:send] failed to send message', err);
       setSendError(err instanceof Error ? err.message : 'Could not send message.');
     } finally {
       setIsSending(false);
