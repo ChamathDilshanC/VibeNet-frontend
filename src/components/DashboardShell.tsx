@@ -93,6 +93,57 @@ export function DashboardShell({
     [keyState],
   );
 
+  // Decrypts an inbound frame, and on failure assumes the peer's cached
+  // public key (in `conversation.peerPublicKey`, persisted via
+  // upsertConversation) has gone stale — e.g. they lost their local private
+  // key and useE2EEKeys self-healed by generating and uploading a new
+  // keypair since we last fetched theirs. Re-fetches their current public
+  // key, busts the cached derived shared key, and retries decryption once
+  // before giving up. This is what turns a permanent, silent OperationError
+  // into a self-correcting resync.
+  const decryptIncoming = useCallback(
+    async (
+      conversation: Conversation,
+      ciphertext: string,
+      nonce: string,
+      currentUserId: string,
+    ): Promise<string> => {
+      const sharedKey = await getSharedKey(conversation);
+      if (!sharedKey) throw new Error('no shared key available');
+
+      try {
+        return await decryptText(sharedKey, ciphertext, nonce);
+      } catch (err) {
+        console.warn(
+          '[vibenet:receive] decrypt failed with cached public key for',
+          conversation.peerId,
+          '— refetching their current key and retrying once',
+          err,
+        );
+        sharedKeyCache.current.delete(conversation.peerId);
+
+        const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
+          `/api/users/${conversation.peerId}/key`,
+        );
+        if (resolved.public_key === conversation.peerPublicKey) {
+          // Server has the same key we already tried — this genuinely isn't
+          // a staleness issue, so don't mask the original error.
+          console.error('[vibenet:receive] peer public key has not changed — this is a real key mismatch');
+          throw err;
+        }
+
+        const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
+        setConversations(upsertConversation(currentUserId, refreshed));
+        console.log('[vibenet:receive] peer public key had rotated, refreshed cache and retrying decrypt');
+
+        const retryKey = await getSharedKey(refreshed);
+        if (!retryKey) throw new Error('no shared key available after key refresh');
+        return await decryptText(retryKey, ciphertext, nonce);
+      }
+    },
+    [getSharedKey],
+  );
+
   // Inbound frames that arrive before this device's E2EE keys are ready (e.g.
   // a brand-new browser profile still generating its keypair — see
   // useE2EEKeys) used to be dropped silently by handleIncoming, since
@@ -208,14 +259,8 @@ export function DashboardShell({
           }
         }
 
-        const sharedKey = await getSharedKey(conversation);
-        if (!sharedKey) {
-          console.error('[vibenet:receive] no shared key available, dropping frame', messageId);
-          return;
-        }
-
         try {
-          const text = await decryptText(sharedKey, ciphertext, nonce);
+          const text = await decryptIncoming(conversation, ciphertext, nonce, user.user_id);
           console.log('[vibenet:receive] decrypted message', messageId, 'from', senderId);
           recordMessage(chatRoomId, {
             id: messageId,
@@ -224,12 +269,14 @@ export function DashboardShell({
             timestamp: timestamp ?? Date.now(),
           });
         } catch (err) {
-          // Undecryptable frame (stale/rotated key) — drop rather than show ciphertext.
+          // Undecryptable even after a key-refresh retry — genuinely
+          // tampered payload or an unresolvable key mismatch. Drop rather
+          // than show ciphertext.
           console.error('[vibenet:receive] decryption failed, dropping frame', messageId, err);
         }
       })();
     },
-    [conversations, getSharedKey, keyState.status, user],
+    [conversations, decryptIncoming, keyState.status, user],
   );
 
   // Replay anything that arrived while keys were still being set up.

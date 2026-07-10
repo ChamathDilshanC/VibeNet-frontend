@@ -126,15 +126,57 @@ export async function encryptText(
 
 // decryptText reverses encryptText. Throws if the ciphertext/nonce/key don't
 // match (tampered payload or wrong shared key).
+//
+// ciphertextB64/nonceB64 arrive as base64 over the wire and are decoded to
+// ArrayBuffers *before* crypto.subtle.decrypt ever sees them — passing a raw
+// string here would throw a TypeError at the WebCrypto API boundary, not the
+// OperationError this throws on a bad tag/key, so the two failure modes are
+// easy to tell apart from the error name alone.
 export async function decryptText(
   sharedKey: CryptoKey,
   ciphertextB64: string,
   nonceB64: string,
 ): Promise<string> {
-  const plainBuf = await crypto.subtle.decrypt(
-    { name: 'AES-GCM', iv: base64ToBuffer(nonceB64) },
-    sharedKey,
-    base64ToBuffer(ciphertextB64),
-  );
-  return new TextDecoder().decode(plainBuf);
+  const ivBuffer = base64ToBuffer(nonceB64);
+  const ciphertextBuffer = base64ToBuffer(ciphertextB64);
+
+  console.log('[vibenet:e2ee] decryptText inputs', {
+    keyAlgorithm: sharedKey.algorithm,
+    keyUsages: sharedKey.usages,
+    keyExtractable: sharedKey.extractable,
+    ivByteLength: ivBuffer.byteLength,
+    ciphertextByteLength: ciphertextBuffer.byteLength,
+  });
+
+  if (ivBuffer.byteLength !== 12) {
+    console.error(
+      '[vibenet:e2ee] nonce is',
+      ivBuffer.byteLength,
+      'bytes — AES-GCM requires exactly 12. This frame is malformed, not a key problem.',
+    );
+  }
+  if (ciphertextBuffer.byteLength < 16) {
+    console.error(
+      '[vibenet:e2ee] ciphertext is only',
+      ciphertextBuffer.byteLength,
+      'bytes — shorter than the 16-byte GCM auth tag, so it is truncated/corrupt, not a key problem.',
+    );
+  }
+
+  try {
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: ivBuffer },
+      sharedKey,
+      ciphertextBuffer,
+    );
+    return new TextDecoder().decode(plainBuf);
+  } catch (err) {
+    // Buffer lengths above were sane, so an OperationError here means the GCM
+    // auth tag didn't verify under this key — i.e. the wrong shared key was
+    // derived (most commonly: the peer's cached public key is stale because
+    // they rotated/regenerated their keypair since we last fetched it). It is
+    // not a base64/buffer formatting bug.
+    console.error('[vibenet:e2ee] crypto.subtle.decrypt failed — wrong shared key, not malformed input', err);
+    throw err;
+  }
 }
