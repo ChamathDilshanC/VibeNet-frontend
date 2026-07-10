@@ -104,7 +104,13 @@ export function Sidebar({
               <SideNavItem
                 key={conversation.peerId}
                 label={conversation.peerUsername}
-                icon={<Avatar name={conversation.peerUsername} size="tiny" />}
+                icon={
+                  <Avatar
+                    src={conversation.peerAvatarUrl}
+                    name={conversation.peerUsername}
+                    size="tiny"
+                  />
+                }
                 isSelected={conversation.peerId === activePeerId}
                 onClick={() => onSelectConversation(conversation.peerId)}
                 endContent={

@@ -120,12 +120,23 @@ export function DashboardShell({
   const syncPeerPublicKey = useCallback(
     async (conversation: Conversation, currentUserId: string): Promise<Conversation> => {
       try {
-        const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
-          `/api/users/${conversation.peerId}/key`,
-        );
-        if (resolved.public_key === conversation.peerPublicKey) return conversation;
-        sharedKeyCache.current.delete(conversation.peerId);
-        const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
+        const resolved = await apiClient.get<{
+          user_id: string;
+          public_key: string;
+          avatar_url?: string;
+        }>(`/api/users/${conversation.peerId}/key`);
+        const keyChanged = resolved.public_key !== conversation.peerPublicKey;
+        // Also backfill the avatar: conversations started before avatars existed
+        // (or from an incoming message) have none cached, so pick it up here even
+        // when the key itself hasn't rotated.
+        const avatarChanged = (resolved.avatar_url ?? undefined) !== conversation.peerAvatarUrl;
+        if (!keyChanged && !avatarChanged) return conversation;
+        if (keyChanged) sharedKeyCache.current.delete(conversation.peerId);
+        const refreshed: Conversation = {
+          ...conversation,
+          peerPublicKey: resolved.public_key,
+          peerAvatarUrl: resolved.avatar_url,
+        };
         setConversations(upsertConversation(currentUserId, refreshed));
         return refreshed;
       } catch {
@@ -332,13 +343,16 @@ export function DashboardShell({
           // just enough to display it. Best-effort: fails silently for
           // PIN-gated senders, since we have no PIN-entry surface here.
           try {
-            const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
-              `/api/users/${senderId}/key`,
-            );
+            const resolved = await apiClient.get<{
+              user_id: string;
+              public_key: string;
+              avatar_url?: string;
+            }>(`/api/users/${senderId}/key`);
             conversation = {
               peerId: senderId,
               peerUsername: `user_${senderId.slice(0, 8)}`,
               peerPublicKey: resolved.public_key,
+              peerAvatarUrl: resolved.avatar_url,
               chatRoomId,
               createdAt: Date.now(),
             };
@@ -385,6 +399,7 @@ export function DashboardShell({
       peerId: peer.userId,
       peerUsername: peer.username,
       peerPublicKey: peer.publicKey,
+      peerAvatarUrl: peer.avatarUrl,
       chatRoomId: chatRoomIdFor(user.user_id, peer.userId),
       createdAt: Date.now(),
     };

@@ -50,7 +50,11 @@ export function EmptyState({
                     type="button"
                     onClick={() => onSelect(conversation.peerId)}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04]">
-                    <Avatar name={conversation.peerUsername} size="small" />
+                    <Avatar
+                      src={conversation.peerAvatarUrl}
+                      name={conversation.peerUsername}
+                      size="small"
+                    />
                     <span className="flex-1 truncate text-sm font-medium text-gray-800">
                       {conversation.peerUsername}
                     </span>

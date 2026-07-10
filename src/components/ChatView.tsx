@@ -134,7 +134,7 @@ export function ChatView({
     <div className="flex h-full min-h-0 flex-1 flex-col bg-gradient-to-br from-[#f1ecfb] via-[#eaeefb] to-[#e6effb]">
       {/* Header — peer identity + live connection status. */}
       <header className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white/70 px-4 py-3 backdrop-blur-sm sm:px-6">
-        <Avatar name={conversation.peerUsername} size="small" />
+        <Avatar src={conversation.peerAvatarUrl} name={conversation.peerUsername} size="small" />
         <div className="flex min-w-0 flex-col">
           <span className="truncate text-sm font-semibold text-gray-900">
             {conversation.peerUsername}
@@ -193,7 +193,7 @@ export function ChatView({
                 ) : (
                   // Receiver bubble — left aligned, avatar + name, light gray.
                   <div className="vibe-msg-in flex origin-bottom-left items-end gap-2">
-                    <Avatar name={conversation.peerUsername} size="small" />
+                    <Avatar src={conversation.peerAvatarUrl} name={conversation.peerUsername} size="small" />
                     <div className="max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
                       <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
                         {conversation.peerUsername}

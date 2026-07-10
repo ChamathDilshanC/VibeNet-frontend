@@ -30,12 +30,14 @@ interface SearchResult {
   user_id: string;
   username: string;
   require_pin: boolean;
+  avatar_url?: string;
 }
 
 export interface ResolvedPeer {
   userId: string;
   username: string;
   publicKey: string;
+  avatarUrl?: string;
 }
 
 const MIN_QUERY_LENGTH = 2;
@@ -99,8 +101,19 @@ export function NewChatDialog({
       const path = pinValue
         ? `/api/users/${user.user_id}/key?pin=${encodeURIComponent(pinValue)}`
         : `/api/users/${user.user_id}/key`;
-      const data = await apiClient.get<{ user_id: string; public_key: string }>(path);
-      onStart({ userId: user.user_id, username: user.username, publicKey: data.public_key });
+      const data = await apiClient.get<{
+        user_id: string;
+        public_key: string;
+        avatar_url?: string;
+      }>(path);
+      onStart({
+        userId: user.user_id,
+        username: user.username,
+        publicKey: data.public_key,
+        // The key response is authoritative for the avatar; fall back to the
+        // one from the search hit if it wasn't included.
+        avatarUrl: data.avatar_url ?? user.avatar_url,
+      });
       onOpenChange(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
@@ -140,7 +153,7 @@ export function NewChatDialog({
               {selected ? (
                 <VStack gap={3}>
                   <HStack gap={2} vAlign="center">
-                    <Avatar name={selected.username} size="small" />
+                    <Avatar src={selected.avatar_url} name={selected.username} size="small" />
                     <Text type="body" weight="semibold">
                       {selected.username}
                     </Text>
@@ -192,7 +205,7 @@ export function NewChatDialog({
                           key={user.user_id}
                           label={user.username}
                           description={user.require_pin ? 'PIN required' : undefined}
-                          startContent={<Avatar name={user.username} size="small" />}
+                          startContent={<Avatar src={user.avatar_url} name={user.username} size="small" />}
                           endContent={
                             user.require_pin ? (
                               <Icon icon={ShieldCheckIcon} size="sm" />

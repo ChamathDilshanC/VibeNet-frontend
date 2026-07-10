@@ -13,6 +13,10 @@ export interface Conversation {
   peerUsername: string;
   /** base64 SPKI — cached from GET /api/users/{id}/key so we don't re-fetch on every reload. */
   peerPublicKey: string;
+  /** Peer's Google avatar URL, if any — cached from search / the key endpoint so the
+   *  DM list, chat header, and bubbles show their photo instead of only initials.
+   *  Absent for password accounts (they fall back to initials). */
+  peerAvatarUrl?: string;
   /** Deterministic room id both peers derive independently — see chatRoomIdFor. */
   chatRoomId: string;
   createdAt: number;
