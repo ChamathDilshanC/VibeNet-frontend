@@ -43,7 +43,7 @@ import { Sidebar } from './Sidebar';
 // message fields are present only on chat frames, `delivered` only on acks,
 // and `chat_room_id` identifies the room for acks and read receipts alike.
 interface InboundFrame {
-  type?: 'message' | 'ack' | 'read';
+  type?: 'message' | 'ack' | 'read' | 'presence';
   message_id?: string;
   sender_id?: string;
   chat_room_id?: string;
@@ -52,7 +52,16 @@ interface InboundFrame {
   timestamp?: number;
   delivered?: boolean;
   reader_id?: string;
+  online?: string[];
 }
+
+// How often to re-query which peers are online (ms). Presence has no push
+// channel, so we poll over the same socket while connected.
+const PRESENCE_POLL_MS = 20_000;
+
+// Stable empty set for the "nobody known online" case (disconnected), so we
+// don't mint a new Set identity on every render.
+const NO_ONLINE_PEERS: ReadonlySet<string> = new Set();
 
 interface RemoteMessageDTO {
   message_id: string;
@@ -82,6 +91,8 @@ export function DashboardShell({
   const [messagesByRoom, setMessagesByRoom] = useState<Record<string, ChatMessage[]>>({});
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // Peer IDs currently reported online by the hub (see the presence poll below).
+  const [onlinePeers, setOnlinePeers] = useState<Set<string>>(new Set());
 
   // Derived AES-GCM keys are per-peer and deterministic (ECDH) — cache them
   // instead of re-deriving on every message.
@@ -269,6 +280,12 @@ export function DashboardShell({
     (data: unknown) => {
       if (!user) return;
       const frame = data as InboundFrame;
+
+      // Presence snapshot: which of the peers we asked about are online.
+      if (frame.type === 'presence') {
+        setOnlinePeers(new Set(frame.online ?? []));
+        return;
+      }
 
       // Delivery ack for a message we sent: grey single → grey double tick.
       if (frame.type === 'ack') {
@@ -459,6 +476,26 @@ export function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-sending on its identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeer, activeRoom, hasPeerMessages, activeMessages.length]);
 
+  // Poll the hub for which conversation peers are online while connected. Sorted
+  // + joined so the effect only restarts when the set of peers actually changes.
+  const peerIdsKey = conversations
+    .map((c) => c.peerId)
+    .sort()
+    .join(',');
+  useEffect(() => {
+    if (connectionStatus !== 'open' || peerIdsKey === '') return;
+    const userIds = peerIdsKey.split(',');
+    const query = () => send({ type: 'presence', user_ids: userIds });
+    query();
+    const timer = setInterval(query, PRESENCE_POLL_MS);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-subscribing on its identity change would needlessly reset the poll.
+  }, [connectionStatus, peerIdsKey]);
+
+  // While disconnected we can't trust the last snapshot, so show everyone
+  // offline until the socket reopens and the poll refreshes it.
+  const visibleOnlinePeers = connectionStatus === 'open' ? onlinePeers : NO_ONLINE_PEERS;
+
   return (
     <AppShell
       contentPadding={0}
@@ -468,6 +505,7 @@ export function DashboardShell({
           user={user}
           conversations={conversations}
           activePeerId={activePeerId}
+          onlinePeers={visibleOnlinePeers}
           onSelectConversation={setActivePeerId}
           onNewChat={() => {
             setNewChatSession((n) => n + 1);
@@ -500,7 +538,11 @@ export function DashboardShell({
                   Your end-to-end encrypted workspace is ready. Pick a
                   conversation from the sidebar or start a new chat.
                 </Text>
-                <EmptyState />
+                <EmptyState
+                  conversations={conversations}
+                  onlinePeers={visibleOnlinePeers}
+                  onSelect={setActivePeerId}
+                />
               </VStack>
             </LayoutContent>
           }

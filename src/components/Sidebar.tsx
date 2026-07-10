@@ -2,10 +2,10 @@
 // and account utilities (chat PIN, settings, profile, sign out).
 //
 // The DM list is real — sourced from the client-side conversation registry
-// (src/lib/conversations.ts) — but presence is not: the backend has no
-// online/offline broadcast, so every conversation shows a neutral "Offline"
-// dot until that's wired up. Faking green dots for accounts with no real
-// presence data would be misleading.
+// (src/lib/conversations.ts). Presence is real too: `onlinePeers` holds the
+// peer IDs the hub currently reports as connected (see DashboardShell's
+// presence poll), so a peer shows a green dot when online and a neutral dot
+// when offline.
 
 'use client';
 
@@ -33,6 +33,7 @@ export function Sidebar({
   user,
   conversations,
   activePeerId,
+  onlinePeers,
   onSelectConversation,
   onNewChat,
   onLogout,
@@ -40,6 +41,7 @@ export function Sidebar({
   user: AuthUser | null;
   conversations: Conversation[];
   activePeerId: string | null;
+  onlinePeers: ReadonlySet<string>;
   onSelectConversation: (peerId: string) => void;
   onNewChat: () => void;
   onLogout: () => void;
@@ -94,16 +96,24 @@ export function Sidebar({
             No conversations yet — start one from &ldquo;New chat&rdquo;.
           </Text>
         ) : (
-          conversations.map((conversation) => (
-            <SideNavItem
-              key={conversation.peerId}
-              label={conversation.peerUsername}
-              icon={<Avatar name={conversation.peerUsername} size="tiny" />}
-              isSelected={conversation.peerId === activePeerId}
-              onClick={() => onSelectConversation(conversation.peerId)}
-              endContent={<StatusDot variant="neutral" label="Offline" />}
-            />
-          ))
+          conversations.map((conversation) => {
+            const isOnline = onlinePeers.has(conversation.peerId);
+            return (
+              <SideNavItem
+                key={conversation.peerId}
+                label={conversation.peerUsername}
+                icon={<Avatar name={conversation.peerUsername} size="tiny" />}
+                isSelected={conversation.peerId === activePeerId}
+                onClick={() => onSelectConversation(conversation.peerId)}
+                endContent={
+                  <StatusDot
+                    variant={isOnline ? 'success' : 'neutral'}
+                    label={isOnline ? 'Online' : 'Offline'}
+                  />
+                }
+              />
+            );
+          })
         )}
       </SideNavSection>
     </SideNav>

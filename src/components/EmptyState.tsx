@@ -1,17 +1,73 @@
 // VibeNet — Empty conversation state, shown when no chat is selected.
+//
+// Beyond the reassurance that messages are encrypted, this surfaces the user's
+// recent conversations so they can jump straight back into one without hunting
+// through the sidebar. Each row shows live presence (green when online).
 
+'use client';
+
+import { Avatar } from '@astryxdesign/core/Avatar';
 import { Text } from '@astryxdesign/core/Text';
+import type { Conversation } from '@/lib/conversations';
 
-export function EmptyState() {
+const MAX_RECENT = 6;
+
+export function EmptyState({
+  conversations,
+  onlinePeers,
+  onSelect,
+}: {
+  conversations: Conversation[];
+  onlinePeers: ReadonlySet<string>;
+  onSelect: (peerId: string) => void;
+}) {
+  // conversations already arrive newest-first (see listConversations).
+  const recent = conversations.slice(0, MAX_RECENT);
+
   return (
-    <div className="vibe-empty mt-8">
-      <Text type="large" weight="bold">
-        No conversation selected
-      </Text>
-      <Text type="supporting" color="secondary">
-        Messages are encrypted on your device — only you and your contact can
-        read them.
-      </Text>
+    <div className="mt-8 flex w-full max-w-md flex-col gap-6">
+      <div className="vibe-empty">
+        <Text type="large" weight="bold">
+          No conversation selected
+        </Text>
+        <Text type="supporting" color="secondary">
+          Messages are encrypted on your device — only you and your contact can
+          read them.
+        </Text>
+      </div>
+
+      {recent.length > 0 && (
+        <div className="flex flex-col gap-2">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+            Recent chats
+          </p>
+          <ul className="flex flex-col gap-1">
+            {recent.map((conversation) => {
+              const isOnline = onlinePeers.has(conversation.peerId);
+              return (
+                <li key={conversation.peerId}>
+                  <button
+                    type="button"
+                    onClick={() => onSelect(conversation.peerId)}
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04]">
+                    <Avatar name={conversation.peerUsername} size="small" />
+                    <span className="flex-1 truncate text-sm font-medium text-gray-800">
+                      {conversation.peerUsername}
+                    </span>
+                    <span
+                      role="img"
+                      aria-label={isOnline ? 'Online' : 'Offline'}
+                      className={`h-2.5 w-2.5 rounded-full ${
+                        isOnline ? 'bg-green-500' : 'bg-gray-300'
+                      }`}
+                    />
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
     </div>
   );
 }
