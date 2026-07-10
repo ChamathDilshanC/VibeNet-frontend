@@ -137,10 +137,14 @@ export function DashboardShell({
           `/api/users/${conversation.peerId}/key`,
         );
         if (resolved.public_key === conversation.peerPublicKey) {
-          console.error(
-            '[vibenet:e2ee] peer public key on the server matches what we already tried for',
+          // Not a recoverable staleness case: the server already advertises the
+          // key we tried. For live messages this is worth noting; for old
+          // history it's the expected "encrypted under a lost key" case, so
+          // keep it at info level rather than error.
+          console.info(
+            '[vibenet:e2ee] peer public key on the server already matches the one we used for',
             conversation.peerId,
-            '— this is a real key mismatch, not staleness',
+            '— nothing to refresh; this ciphertext was encrypted under a key that is gone',
           );
           return null;
         }
@@ -215,15 +219,23 @@ export function DashboardShell({
         );
         if (remote.length === 0) return;
 
+        // Skip anything we've already decrypted and cached locally — otherwise
+        // every reload re-attempts (and re-fails on) the same old messages that
+        // were encrypted under keys this device no longer has, spamming the
+        // console and doing pointless crypto work each time.
+        const alreadyHave = new Set(getMessages(conversation.chatRoomId).map((m) => m.id));
+        const pending = remote.filter((m) => !alreadyHave.has(m.message_id));
+        if (pending.length === 0) return;
+
         const decryptAll = async (key: CryptoKey) => {
           const ok: ChatMessage[] = [];
-          for (const m of remote) {
+          for (const m of pending) {
             try {
               const text = await decryptText(key, m.ciphertext, m.nonce);
               ok.push({ id: m.message_id, senderId: m.sender_id, text, timestamp: m.timestamp });
             } catch {
-              // Collected as a miss below — one shared key per conversation,
-              // so a miss on one message means every message will miss.
+              // Expected for history predating a key rotation/loss — summarised
+              // once below rather than logged per message.
             }
           }
           return ok;
@@ -231,31 +243,22 @@ export function DashboardShell({
 
         let decrypted = await decryptAll(sharedKey);
 
-        if (decrypted.length < remote.length) {
-          console.warn(
-            '[vibenet:history]',
-            remote.length - decrypted.length,
-            'of',
-            remote.length,
-            'history message(s) failed to decrypt with the cached key for',
-            conversation.peerId,
-            '— retrying once with a refreshed peer key',
-          );
+        // A miss can mean the peer rotated their key since we cached it — retry
+        // once against their current key before concluding it's unrecoverable.
+        if (decrypted.length < pending.length) {
           const refresh = await refreshPeerSharedKey(conversation, currentUserId);
           if (refresh) {
             const retried = await decryptAll(refresh.key);
-            // Keep whichever attempt decrypted more — the peer's key may
-            // have rotated partway through this room's history, splitting
-            // messages across an old and a new key.
             if (retried.length > decrypted.length) decrypted = retried;
           }
-          if (decrypted.length < remote.length) {
-            console.warn(
-              '[vibenet:history]',
-              remote.length - decrypted.length,
-              'message(s) still undecryptable after retry — encrypted under a key this device (or the peer) no longer has. Inherent E2EE key loss, not a bug.',
-            );
-          }
+        }
+
+        const undecryptable = pending.length - decrypted.length;
+        if (undecryptable > 0) {
+          console.info(
+            `[vibenet:history] ${decrypted.length}/${pending.length} new history message(s) decrypted; ` +
+              `${undecryptable} undecryptable (encrypted under a key no longer available — expected after key loss/rotation, not a live-messaging fault).`,
+          );
         }
 
         if (decrypted.length === 0) return;
