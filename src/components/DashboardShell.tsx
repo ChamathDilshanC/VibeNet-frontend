@@ -24,7 +24,13 @@ import {
   type Conversation,
 } from '@/lib/conversations';
 import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
-import { getMessages, mergeMessages, type ChatMessage } from '@/lib/messageStore';
+import {
+  getMessages,
+  markOwnMessagesRead,
+  mergeMessages,
+  setMessageStatus,
+  type ChatMessage,
+} from '@/lib/messageStore';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
@@ -32,13 +38,20 @@ import { EmptyState } from './EmptyState';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
 import { Sidebar } from './Sidebar';
 
+// A frame off the WebSocket. `type` discriminates a chat message from the
+// delivery/read control frames (see the backend websocket package); the
+// message fields are present only on chat frames, `delivered` only on acks,
+// and `chat_room_id` identifies the room for acks and read receipts alike.
 interface InboundFrame {
-  message_id: string;
-  sender_id: string;
-  chat_room_id: string;
-  ciphertext: string;
-  nonce: string;
-  timestamp: number;
+  type?: 'message' | 'ack' | 'read';
+  message_id?: string;
+  sender_id?: string;
+  chat_room_id?: string;
+  ciphertext?: string;
+  nonce?: string;
+  timestamp?: number;
+  delivered?: boolean;
+  reader_id?: string;
 }
 
 interface RemoteMessageDTO {
@@ -255,7 +268,27 @@ export function DashboardShell({
   const handleIncoming = useCallback(
     (data: unknown) => {
       if (!user) return;
-      const frame = data as Partial<InboundFrame>;
+      const frame = data as InboundFrame;
+
+      // Delivery ack for a message we sent: grey single → grey double tick.
+      if (frame.type === 'ack') {
+        if (frame.delivered && frame.chat_room_id && frame.message_id) {
+          const updated = setMessageStatus(frame.chat_room_id, frame.message_id, 'delivered');
+          setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
+        }
+        return;
+      }
+
+      // Read receipt: the recipient opened the chat — flip our sent messages
+      // in that room to the blue double tick.
+      if (frame.type === 'read') {
+        if (frame.chat_room_id) {
+          const updated = markOwnMessagesRead(frame.chat_room_id, user.user_id);
+          setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
+        }
+        return;
+      }
+
       const {
         sender_id: senderId,
         chat_room_id: chatRoomId,
@@ -270,7 +303,7 @@ export function DashboardShell({
       // first inbound message) — queue and replay once ready instead of
       // dropping the frame for good.
       if (keyState.status !== 'ready') {
-        pendingFramesRef.current.push(frame as InboundFrame);
+        pendingFramesRef.current.push(frame);
         return;
       }
 
@@ -382,7 +415,8 @@ export function DashboardShell({
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
 
-      const delivered = send({
+      const enqueued = send({
+        type: 'message',
         message_id: messageId,
         receiver_id: conversation.peerId,
         chat_room_id: conversation.chatRoomId,
@@ -390,13 +424,16 @@ export function DashboardShell({
         nonce,
         timestamp,
       });
-      if (!delivered) throw new Error('Not connected — reconnecting, try again shortly.');
+      if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
 
+      // Optimistically show a single tick; the server's delivery ack upgrades
+      // it to a double tick, and the recipient's read receipt turns it blue.
       recordMessage(conversation.chatRoomId, {
         id: messageId,
         senderId: user.user_id,
         text,
         timestamp,
+        status: 'sent',
       });
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Could not send message.');
@@ -409,6 +446,18 @@ export function DashboardShell({
   const activeMessages = activeConversation
     ? (messagesByRoom[activeConversation.chatRoomId] ?? getMessages(activeConversation.chatRoomId))
     : [];
+
+  // While a conversation is open, tell the peer we've read their messages so
+  // their sent bubbles turn blue. Re-runs when a new message arrives (the
+  // message count changes) so incoming messages are marked read as they land.
+  const activePeer = activeConversation?.peerId;
+  const activeRoom = activeConversation?.chatRoomId;
+  const hasPeerMessages = activeMessages.some((m) => m.senderId === activePeer);
+  useEffect(() => {
+    if (connectionStatus !== 'open' || !activePeer || !activeRoom || !hasPeerMessages) return;
+    send({ type: 'read', receiver_id: activePeer, chat_room_id: activeRoom });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-sending on its identity change would be wasteful, not incorrect.
+  }, [connectionStatus, activePeer, activeRoom, hasPeerMessages, activeMessages.length]);
 
   return (
     <AppShell

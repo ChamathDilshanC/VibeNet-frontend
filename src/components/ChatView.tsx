@@ -18,7 +18,7 @@ import { FaceSmileIcon, PaperClipIcon } from '@heroicons/react/24/outline';
 import { PaperAirplaneIcon } from '@heroicons/react/24/solid';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import type { Conversation } from '@/lib/conversations';
-import type { ChatMessage } from '@/lib/messageStore';
+import type { ChatMessage, MessageStatus } from '@/lib/messageStore';
 
 const CONNECTION_LABEL: Record<ChatSocketStatus, string> = {
   open: 'Connected',
@@ -32,12 +32,47 @@ const CONNECTION_VARIANT: Record<ChatSocketStatus, 'success' | 'warning' | 'neut
   closed: 'warning',
 };
 
+const STATUS_LABEL: Record<MessageStatus, string> = {
+  sent: 'Sent',
+  delivered: 'Delivered',
+  read: 'Read',
+};
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
   });
+}
+
+// WhatsApp-style delivery ticks, sized to sit next to the timestamp inside the
+// blue sender bubble: one tick when only the server has it, two once the
+// recipient is online and received it, and a bright cyan double tick once
+// they've read it (a plain blue would vanish against the blue bubble).
+function DeliveryTicks({ status }: { status: MessageStatus }) {
+  const isDouble = status !== 'sent';
+  const isRead = status === 'read';
+  return (
+    <span
+      role="img"
+      aria-label={STATUS_LABEL[status]}
+      className={`inline-flex ${isRead ? 'text-cyan-300' : 'text-blue-100/80'}`}>
+      <svg
+        width="16"
+        height="11"
+        viewBox="0 0 16 11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        aria-hidden="true">
+        <path d="M1 6l3 3 5.5-6.5" />
+        {isDouble && <path d="M6.5 9l5.5-6.5" />}
+      </svg>
+    </span>
+  );
 }
 
 export function ChatView({
@@ -114,8 +149,9 @@ export function ChatView({
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                       {message.text}
                     </p>
-                    <span className="mt-1 block text-right text-[11px] text-blue-100/90">
+                    <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-blue-100/90">
                       {formatTime(message.timestamp)}
+                      {message.status && <DeliveryTicks status={message.status} />}
                     </span>
                   </div>
                 </div>
@@ -127,7 +163,7 @@ export function ChatView({
               <div key={message.id} className="flex items-end gap-2">
                 <Avatar name={conversation.peerUsername} size="small" />
                 <div className="max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
-                  <span className="mb-0.5 block text-[13px] font-semibold text-gray-900">
+                  <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
                     {conversation.peerUsername}
                   </span>
                   <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
