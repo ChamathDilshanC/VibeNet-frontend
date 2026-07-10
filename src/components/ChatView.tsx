@@ -11,7 +11,7 @@
 
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import { FaceSmileIcon, PaperClipIcon } from '@heroicons/react/24/outline';
@@ -43,6 +43,30 @@ function formatTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit',
     hour12: false,
+  });
+}
+
+function isSameDay(a: number, b: number): boolean {
+  const da = new Date(a);
+  const db = new Date(b);
+  return (
+    da.getFullYear() === db.getFullYear() &&
+    da.getMonth() === db.getMonth() &&
+    da.getDate() === db.getDate()
+  );
+}
+
+// A day separator label: "Today"/"Yesterday" for the two most recent days,
+// otherwise a written-out date (the year is dropped when it's the current one).
+function dayLabel(timestamp: number): string {
+  const now = Date.now();
+  if (isSameDay(timestamp, now)) return 'Today';
+  if (isSameDay(timestamp, now - 86_400_000)) return 'Yesterday';
+  const date = new Date(timestamp);
+  return date.toLocaleDateString([], {
+    day: 'numeric',
+    month: 'long',
+    ...(date.getFullYear() === new Date().getFullYear() ? {} : { year: 'numeric' }),
   });
 }
 
@@ -136,42 +160,54 @@ export function ChatView({
             </p>
           )}
 
-          {messages.map((message) => {
+          {messages.map((message, index) => {
             const isMine = message.senderId === myUserId;
+            const prev = messages[index - 1];
+            // A centered date chip precedes the first message and any message
+            // that starts a new calendar day.
+            const showDay = !prev || !isSameDay(prev.timestamp, message.timestamp);
 
-            if (isMine) {
-              // Sender bubble — right aligned, solid blue, white text.
-              return (
-                <div key={message.id} className="vibe-msg-in flex origin-bottom-right justify-end">
-                  <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] px-4 py-2.5 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
-                    <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                      {message.text}
-                    </p>
-                    <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
-                      {formatTime(message.timestamp)}
-                      {message.status && <DeliveryTicks status={message.status} />}
+            return (
+              <Fragment key={message.id}>
+                {showDay && (
+                  <div className="flex justify-center py-1">
+                    <span className="rounded-full bg-white/70 px-3 py-1 text-[11px] font-medium text-gray-500 shadow-sm ring-1 ring-black/[0.03] backdrop-blur-sm">
+                      {dayLabel(message.timestamp)}
                     </span>
                   </div>
-                </div>
-              );
-            }
+                )}
 
-            // Receiver bubble — left aligned, avatar + name, light gray.
-            return (
-              <div key={message.id} className="vibe-msg-in flex origin-bottom-left items-end gap-2">
-                <Avatar name={conversation.peerUsername} size="small" />
-                <div className="max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
-                  <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
-                    {conversation.peerUsername}
-                  </span>
-                  <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
-                    {message.text}
-                  </p>
-                  <span className="mt-1 block text-right text-[11px] text-gray-400">
-                    {formatTime(message.timestamp)}
-                  </span>
-                </div>
-              </div>
+                {isMine ? (
+                  // Sender bubble — right aligned, solid blue, white text.
+                  <div className="vibe-msg-in flex origin-bottom-right justify-end">
+                    <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] px-4 py-2.5 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
+                      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                        {message.text}
+                      </p>
+                      <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
+                        {formatTime(message.timestamp)}
+                        {message.status && <DeliveryTicks status={message.status} />}
+                      </span>
+                    </div>
+                  </div>
+                ) : (
+                  // Receiver bubble — left aligned, avatar + name, light gray.
+                  <div className="vibe-msg-in flex origin-bottom-left items-end gap-2">
+                    <Avatar name={conversation.peerUsername} size="small" />
+                    <div className="max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
+                      <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
+                        {conversation.peerUsername}
+                      </span>
+                      <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
+                        {message.text}
+                      </p>
+                      <span className="mt-1 block text-right text-[11px] text-gray-400">
+                        {formatTime(message.timestamp)}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </Fragment>
             );
           })}
           <div ref={bottomRef} />
