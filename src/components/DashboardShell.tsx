@@ -76,7 +76,13 @@ export function DashboardShell({
 
   const getSharedKey = useCallback(
     async (peer: Conversation): Promise<CryptoKey | null> => {
-      if (keyState.status !== 'ready') return null;
+      if (keyState.status !== 'ready') {
+        console.warn('[vibenet:e2ee] shared key requested before local keys were ready', {
+          peerId: peer.peerId,
+          keyStatus: keyState.status,
+        });
+        return null;
+      }
       const cached = sharedKeyCache.current.get(peer.peerId);
       if (cached) return cached;
       const theirPublicKey = await importPublicKey(peer.peerPublicKey);
@@ -86,6 +92,13 @@ export function DashboardShell({
     },
     [keyState],
   );
+
+  // Inbound frames that arrive before this device's E2EE keys are ready (e.g.
+  // a brand-new browser profile still generating its keypair — see
+  // useE2EEKeys) used to be dropped silently by handleIncoming, since
+  // getSharedKey has nothing to derive with yet. Queue them here and replay
+  // once keyState flips to 'ready' instead of losing them.
+  const pendingFramesRef = useRef<InboundFrame[]>([]);
 
   // Catches a conversation up on anything sent while this device wasn't
   // connected — the WS hub only delivers live, with no queue (see
@@ -147,7 +160,24 @@ export function DashboardShell({
         message_id: messageId,
         timestamp,
       } = frame;
-      if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) return;
+      console.log('[vibenet:receive] frontend received frame', {
+        messageId,
+        senderId,
+        chatRoomId,
+      });
+      if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) {
+        console.error('[vibenet:receive] dropping frame — missing required fields', frame);
+        return;
+      }
+
+      // Keys not generated/imported yet (fresh browser profile racing the
+      // first inbound message) — queue and replay once ready instead of
+      // dropping the frame for good.
+      if (keyState.status !== 'ready') {
+        console.warn('[vibenet:receive] E2EE keys not ready yet, queuing frame for retry', messageId);
+        pendingFramesRef.current.push(frame as InboundFrame);
+        return;
+      }
 
       void (async () => {
         let conversation = conversations.find((c) => c.peerId === senderId);
@@ -168,7 +198,9 @@ export function DashboardShell({
               createdAt: Date.now(),
             };
             setConversations(upsertConversation(user.user_id, conversation));
-          } catch {
+            console.log('[vibenet:receive] auto-resolved unknown sender', senderId);
+          } catch (err) {
+            console.error('[vibenet:receive] could not resolve unknown sender', senderId, err);
             gooeyToast('New encrypted message from an unknown contact.', {
               description: 'Start a chat with them from "New chat" to read it.',
             });
@@ -177,23 +209,37 @@ export function DashboardShell({
         }
 
         const sharedKey = await getSharedKey(conversation);
-        if (!sharedKey) return;
+        if (!sharedKey) {
+          console.error('[vibenet:receive] no shared key available, dropping frame', messageId);
+          return;
+        }
 
         try {
           const text = await decryptText(sharedKey, ciphertext, nonce);
+          console.log('[vibenet:receive] decrypted message', messageId, 'from', senderId);
           recordMessage(chatRoomId, {
             id: messageId,
             senderId,
             text,
             timestamp: timestamp ?? Date.now(),
           });
-        } catch {
+        } catch (err) {
           // Undecryptable frame (stale/rotated key) — drop rather than show ciphertext.
+          console.error('[vibenet:receive] decryption failed, dropping frame', messageId, err);
         }
       })();
     },
-    [conversations, getSharedKey, user],
+    [conversations, getSharedKey, keyState.status, user],
   );
+
+  // Replay anything that arrived while keys were still being set up.
+  useEffect(() => {
+    if (keyState.status !== 'ready' || pendingFramesRef.current.length === 0) return;
+    const queued = pendingFramesRef.current;
+    pendingFramesRef.current = [];
+    console.log('[vibenet:receive] keys now ready, replaying', queued.length, 'queued frame(s)');
+    for (const frame of queued) handleIncoming(frame);
+  }, [keyState.status, handleIncoming]);
 
   const { status: connectionStatus, send } = useChatSocket(handleIncoming);
 
@@ -242,6 +288,11 @@ export function DashboardShell({
       const { ciphertext, nonce } = await encryptText(sharedKey, text);
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
+      console.log('[vibenet:send] encrypted, sending over socket', {
+        messageId,
+        receiverId: conversation.peerId,
+        chatRoomId: conversation.chatRoomId,
+      });
 
       const delivered = send({
         message_id: messageId,
@@ -251,6 +302,7 @@ export function DashboardShell({
         nonce,
         timestamp,
       });
+      console.log('[vibenet:send] socket.send() returned delivered =', delivered, 'for', messageId);
       if (!delivered) throw new Error('Not connected — reconnecting, try again shortly.');
 
       recordMessage(conversation.chatRoomId, {
@@ -260,6 +312,7 @@ export function DashboardShell({
         timestamp,
       });
     } catch (err) {
+      console.error('[vibenet:send] failed to send message', err);
       setSendError(err instanceof Error ? err.message : 'Could not send message.');
     } finally {
       setIsSending(false);

@@ -55,21 +55,31 @@ export function useChatSocket(onMessage: (data: unknown) => void) {
           socket.close();
           return;
         }
+        console.log('[vibenet:ws] connection open');
         setStatus('open');
       };
-      socket.onclose = () => {
+      socket.onclose = (event) => {
         if (cancelled) return;
+        console.log('[vibenet:ws] connection closed, reconnecting in', RECONNECT_DELAY_MS, 'ms', {
+          code: event.code,
+          reason: event.reason,
+        });
         setStatus('closed');
         retryTimer = setTimeout(connect, RECONNECT_DELAY_MS);
       };
-      socket.onerror = () => {
+      socket.onerror = (event) => {
+        console.error('[vibenet:ws] connection error', event);
         socket.close();
       };
       socket.onmessage = (event) => {
+        console.log('[vibenet:ws] frame received over the wire', event.data);
         try {
-          onMessageRef.current(JSON.parse(event.data));
-        } catch {
+          const parsed = JSON.parse(event.data);
+          console.log('[vibenet:ws] frame parsed, dispatching to onMessage handler', parsed);
+          onMessageRef.current(parsed);
+        } catch (err) {
           // Malformed frame — ignore rather than crash the connection.
+          console.error('[vibenet:ws] failed to parse incoming frame as JSON', err, event.data);
         }
       };
     }
