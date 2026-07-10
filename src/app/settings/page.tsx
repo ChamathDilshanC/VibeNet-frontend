@@ -23,8 +23,10 @@ import { updateProfile } from '@/lib/user';
 import { useAuth } from '@/hooks/useAuth';
 
 // Mirrors validateUsername in the backend's internal/api/handler.go, so the
-// obvious mistakes are caught inline instead of via a 400.
-const USERNAME_PATTERN = /^[a-z0-9._]+$/;
+// obvious mistakes are caught inline instead of via a 400. Mixed case is
+// allowed; the backend enforces uniqueness case-insensitively, so "taken" is
+// still reported from the server (a 409) rather than guessed at here.
+const USERNAME_PATTERN = /^[A-Za-z0-9._]+$/;
 const USERNAME_MIN = 3;
 const USERNAME_MAX = 48;
 
@@ -32,7 +34,7 @@ function usernameError(username: string): string | null {
   if (username.length < USERNAME_MIN) return `At least ${USERNAME_MIN} characters.`;
   if (username.length > USERNAME_MAX) return `At most ${USERNAME_MAX} characters.`;
   if (!USERNAME_PATTERN.test(username)) {
-    return 'Lowercase letters, numbers, dots, and underscores only.';
+    return 'Letters, numbers, dots, and underscores only.';
   }
   return null;
 }
