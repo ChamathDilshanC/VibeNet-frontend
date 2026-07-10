@@ -17,6 +17,7 @@ import {
   generateKeyPair,
   getPrivateKeyJwk,
   importPrivateKey,
+  publicKeyB64FromPrivateJwk,
   storePrivateKey,
 } from '@/lib/e2ee';
 import type { AuthUser } from '@/lib/api';
@@ -41,6 +42,23 @@ export function useE2EEKeys(user: AuthUser | null) {
           storePrivateKey(user.username, keys.privateKeyJwk);
           await apiClient.put('/api/user/public-key', { public_key: keys.publicKey });
           jwk = keys.privateKeyJwk;
+        } else {
+          // A local private key already exists — but the server's copy of our
+          // *public* key can still be stale: the very first upload may have
+          // failed after the private key was already stored (we'd then skip
+          // this whole block forever), or another device overwrote it. If the
+          // server advertises a public key that doesn't match this private
+          // key, every message peers encrypt to us is undecryptable. Re-derive
+          // and re-publish the matching public key to keep the two in lockstep.
+          // Best-effort: a transient failure here must not block the dashboard,
+          // and it self-heals on the next load.
+          try {
+            const publicKey = await publicKeyB64FromPrivateJwk(jwk);
+            await apiClient.put('/api/user/public-key', { public_key: publicKey });
+            console.log('[vibenet:e2ee] re-published public key matching the local private key');
+          } catch (err) {
+            console.warn('[vibenet:e2ee] could not re-publish public key (will retry next load)', err);
+          }
         }
         const privateKey = await importPrivateKey(jwk);
         if (!cancelled) setState({ status: 'ready', privateKey });

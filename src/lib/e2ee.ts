@@ -87,6 +87,27 @@ export function importPublicKey(base64Spki: string): Promise<CryptoKey> {
   return crypto.subtle.importKey('spki', base64ToBuffer(base64Spki), ECDH_PARAMS, true, []);
 }
 
+// publicKeyB64FromPrivateJwk reconstructs the base64 SPKI public key that
+// corresponds to a stored private JWK. We only persist the private key
+// locally, but an EC private JWK already carries the public coordinates
+// (x, y) — dropping the private scalar (d) leaves exactly the public key.
+// This lets us re-publish the public half that matches whatever private key
+// this device currently holds, keeping the server's copy in lockstep: if the
+// two ever diverge, every message a peer encrypts to us becomes undecryptable.
+export async function publicKeyB64FromPrivateJwk(jwk: JsonWebKey): Promise<string> {
+  const publicJwk: JsonWebKey = {
+    kty: jwk.kty,
+    crv: jwk.crv,
+    x: jwk.x,
+    y: jwk.y,
+    ext: true,
+    key_ops: [],
+  };
+  const publicKey = await crypto.subtle.importKey('jwk', publicJwk, ECDH_PARAMS, true, []);
+  const spki = await crypto.subtle.exportKey('spki', publicKey);
+  return bufferToBase64(spki);
+}
+
 // deriveSharedKey computes the AES-256-GCM key both ends of a conversation
 // arrive at independently via ECDH — my private key + their public key gives
 // the same result as their private key + my public key.

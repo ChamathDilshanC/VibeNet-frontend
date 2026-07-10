@@ -93,6 +93,33 @@ export function DashboardShell({
     [keyState],
   );
 
+  // Proactively re-fetches a peer's current public key and updates the cached
+  // conversation (busting the derived shared key) when it changed. Runs when a
+  // conversation is opened so our *outgoing* messages are always encrypted to
+  // the peer's current key rather than a copy cached who-knows-when — the
+  // sender is the only party that can prevent encrypting to a rotated key.
+  // Quiet: an unchanged key is the normal case, not an error.
+  const syncPeerPublicKey = useCallback(
+    async (conversation: Conversation, currentUserId: string): Promise<Conversation> => {
+      try {
+        const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
+          `/api/users/${conversation.peerId}/key`,
+        );
+        if (resolved.public_key === conversation.peerPublicKey) return conversation;
+        sharedKeyCache.current.delete(conversation.peerId);
+        const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
+        setConversations(upsertConversation(currentUserId, refreshed));
+        console.log('[vibenet:e2ee] peer public key changed on open, refreshed cache for', conversation.peerId);
+        return refreshed;
+      } catch (err) {
+        // Best-effort — a cached key still works if it hasn't rotated.
+        console.warn('[vibenet:e2ee] could not refresh peer public key on open for', conversation.peerId, err);
+        return conversation;
+      }
+    },
+    [],
+  );
+
   // Re-fetches a peer's current public key, refreshes the cached conversation
   // entry (and busts the cached derived shared key) when it turns out to
   // differ from what we had cached — e.g. they lost their local private key
@@ -369,7 +396,14 @@ export function DashboardShell({
   useEffect(() => {
     if (connectionStatus !== 'open' || !activePeerId || !user) return;
     const conversation = conversations.find((c) => c.peerId === activePeerId);
-    if (conversation) void syncHistory(conversation, user.user_id);
+    if (!conversation) return;
+    const currentUserId = user.user_id;
+    // Refresh the peer's public key first so our outgoing messages target
+    // their current key, then catch up on history.
+    void (async () => {
+      const fresh = await syncPeerPublicKey(conversation, currentUserId);
+      await syncHistory(fresh, currentUserId);
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on reconnect only; re-running for every unrelated `conversations`/`syncHistory` identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeerId]);
 
