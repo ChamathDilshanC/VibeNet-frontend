@@ -47,17 +47,15 @@ function formatTime(timestamp: number): string {
 }
 
 // WhatsApp-style delivery ticks, sized to sit next to the timestamp inside the
-// blue sender bubble: one tick when only the server has it, two once the
-// recipient is online and received it, and a bright cyan double tick once
-// they've read it (a plain blue would vanish against the blue bubble).
+// sender bubble: one tick when only the server has it, two once the recipient
+// is online and received it, and a deep-blue double tick once they've read it —
+// which "lights up" against the lighter logo-blue bubble.
 function DeliveryTicks({ status }: { status: MessageStatus }) {
   const isDouble = status !== 'sent';
   const isRead = status === 'read';
+  const color = isRead ? 'text-[#0b3f8f]' : status === 'delivered' ? 'text-white/90' : 'text-white/70';
   return (
-    <span
-      role="img"
-      aria-label={STATUS_LABEL[status]}
-      className={`inline-flex ${isRead ? 'text-cyan-300' : 'text-blue-100/80'}`}>
+    <span role="img" aria-label={STATUS_LABEL[status]} className={`inline-flex ${color}`}>
       <svg
         width="16"
         height="11"
@@ -145,11 +143,11 @@ export function ChatView({
               // Sender bubble — right aligned, solid blue, white text.
               return (
                 <div key={message.id} className="flex justify-end">
-                  <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[#3478f6] px-4 py-2.5 text-white shadow-sm">
+                  <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] px-4 py-2.5 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                       {message.text}
                     </p>
-                    <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-blue-100/90">
+                    <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
                       {formatTime(message.timestamp)}
                       {message.status && <DeliveryTicks status={message.status} />}
                     </span>
@@ -221,7 +219,7 @@ export function ChatView({
               type="submit"
               aria-label="Send message"
               disabled={!canSend}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#3478f6] text-white shadow-sm transition-colors hover:bg-[#2f6fe0] disabled:cursor-not-allowed disabled:bg-gray-300">
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--vibe-blue)] text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-gray-300">
               <PaperAirplaneIcon className="h-5 w-5" />
             </button>
           </form>
