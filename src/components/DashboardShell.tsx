@@ -93,14 +93,51 @@ export function DashboardShell({
     [keyState],
   );
 
-  // Decrypts an inbound frame, and on failure assumes the peer's cached
-  // public key (in `conversation.peerPublicKey`, persisted via
-  // upsertConversation) has gone stale — e.g. they lost their local private
-  // key and useE2EEKeys self-healed by generating and uploading a new
-  // keypair since we last fetched theirs. Re-fetches their current public
-  // key, busts the cached derived shared key, and retries decryption once
-  // before giving up. This is what turns a permanent, silent OperationError
-  // into a self-correcting resync.
+  // Re-fetches a peer's current public key, refreshes the cached conversation
+  // entry (and busts the cached derived shared key) when it turns out to
+  // differ from what we had cached — e.g. they lost their local private key
+  // and useE2EEKeys self-healed by generating and uploading a new keypair
+  // since we last fetched theirs. Returns null if the server's key matches
+  // what we already tried (a real mismatch, not staleness) or the refresh
+  // itself fails, so callers can tell "not recoverable" apart from "fixed."
+  const refreshPeerSharedKey = useCallback(
+    async (
+      conversation: Conversation,
+      currentUserId: string,
+    ): Promise<{ key: CryptoKey; conversation: Conversation } | null> => {
+      try {
+        const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
+          `/api/users/${conversation.peerId}/key`,
+        );
+        if (resolved.public_key === conversation.peerPublicKey) {
+          console.error(
+            '[vibenet:e2ee] peer public key on the server matches what we already tried for',
+            conversation.peerId,
+            '— this is a real key mismatch, not staleness',
+          );
+          return null;
+        }
+
+        sharedKeyCache.current.delete(conversation.peerId);
+        const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
+        setConversations(upsertConversation(currentUserId, refreshed));
+        console.log('[vibenet:e2ee] peer public key had rotated, refreshed cache for', conversation.peerId);
+
+        const key = await getSharedKey(refreshed);
+        if (!key) return null;
+        return { key, conversation: refreshed };
+      } catch (err) {
+        console.error('[vibenet:e2ee] failed to refresh peer public key for', conversation.peerId, err);
+        return null;
+      }
+    },
+    [getSharedKey],
+  );
+
+  // Decrypts a single inbound frame, retrying once against a freshly-fetched
+  // peer public key on failure (see refreshPeerSharedKey) before giving up.
+  // This is what turns a permanent, silent OperationError into a
+  // self-correcting resync.
   const decryptIncoming = useCallback(
     async (
       conversation: Conversation,
@@ -120,28 +157,13 @@ export function DashboardShell({
           '— refetching their current key and retrying once',
           err,
         );
-        sharedKeyCache.current.delete(conversation.peerId);
-
-        const resolved = await apiClient.get<{ user_id: string; public_key: string }>(
-          `/api/users/${conversation.peerId}/key`,
-        );
-        if (resolved.public_key === conversation.peerPublicKey) {
-          // Server has the same key we already tried — this genuinely isn't
-          // a staleness issue, so don't mask the original error.
-          console.error('[vibenet:receive] peer public key has not changed — this is a real key mismatch');
-          throw err;
-        }
-
-        const refreshed: Conversation = { ...conversation, peerPublicKey: resolved.public_key };
-        setConversations(upsertConversation(currentUserId, refreshed));
-        console.log('[vibenet:receive] peer public key had rotated, refreshed cache and retrying decrypt');
-
-        const retryKey = await getSharedKey(refreshed);
-        if (!retryKey) throw new Error('no shared key available after key refresh');
-        return await decryptText(retryKey, ciphertext, nonce);
+        const refresh = await refreshPeerSharedKey(conversation, currentUserId);
+        if (!refresh) throw err;
+        console.log('[vibenet:receive] retrying decrypt with refreshed key');
+        return await decryptText(refresh.key, ciphertext, nonce);
       }
     },
-    [getSharedKey],
+    [getSharedKey, refreshPeerSharedKey],
   );
 
   // Inbound frames that arrive before this device's E2EE keys are ready (e.g.
@@ -156,7 +178,7 @@ export function DashboardShell({
   // GetChatHistory on the backend). Best-effort: a failed fetch just means
   // live delivery keeps working without the catch-up.
   const syncHistory = useCallback(
-    async (conversation: Conversation) => {
+    async (conversation: Conversation, currentUserId: string) => {
       try {
         const sharedKey = await getSharedKey(conversation);
         if (!sharedKey) return;
@@ -166,29 +188,59 @@ export function DashboardShell({
         );
         if (remote.length === 0) return;
 
-        const decrypted: ChatMessage[] = [];
-        for (const m of remote) {
-          try {
-            const text = await decryptText(sharedKey, m.ciphertext, m.nonce);
-            decrypted.push({
-              id: m.message_id,
-              senderId: m.sender_id,
-              text,
-              timestamp: m.timestamp,
-            });
-          } catch {
-            // Skip anything that fails to decrypt (e.g. sent under a rotated key).
+        const decryptAll = async (key: CryptoKey) => {
+          const ok: ChatMessage[] = [];
+          for (const m of remote) {
+            try {
+              const text = await decryptText(key, m.ciphertext, m.nonce);
+              ok.push({ id: m.message_id, senderId: m.sender_id, text, timestamp: m.timestamp });
+            } catch {
+              // Collected as a miss below — one shared key per conversation,
+              // so a miss on one message means every message will miss.
+            }
+          }
+          return ok;
+        };
+
+        let decrypted = await decryptAll(sharedKey);
+
+        if (decrypted.length < remote.length) {
+          console.warn(
+            '[vibenet:history]',
+            remote.length - decrypted.length,
+            'of',
+            remote.length,
+            'history message(s) failed to decrypt with the cached key for',
+            conversation.peerId,
+            '— retrying once with a refreshed peer key',
+          );
+          const refresh = await refreshPeerSharedKey(conversation, currentUserId);
+          if (refresh) {
+            const retried = await decryptAll(refresh.key);
+            // Keep whichever attempt decrypted more — the peer's key may
+            // have rotated partway through this room's history, splitting
+            // messages across an old and a new key.
+            if (retried.length > decrypted.length) decrypted = retried;
+          }
+          if (decrypted.length < remote.length) {
+            console.warn(
+              '[vibenet:history]',
+              remote.length - decrypted.length,
+              'message(s) still undecryptable after retry — encrypted under a key this device (or the peer) no longer has. Inherent E2EE key loss, not a bug.',
+            );
           }
         }
+
         if (decrypted.length === 0) return;
 
         const merged = mergeMessages(conversation.chatRoomId, decrypted);
         setMessagesByRoom((prev) => ({ ...prev, [conversation.chatRoomId]: merged }));
-      } catch {
+      } catch (err) {
         // Network/auth failure — live delivery still works without history.
+        console.error('[vibenet:history] failed to sync history for', conversation.chatRoomId, err);
       }
     },
-    [getSharedKey],
+    [getSharedKey, refreshPeerSharedKey],
   );
 
   // Goes through mergeMessages (dedupe by id) rather than a blind append —
@@ -315,9 +367,9 @@ export function DashboardShell({
   // connection drops and reconnects while a conversation is open — otherwise
   // anything sent during the gap would only show up on the next full reload.
   useEffect(() => {
-    if (connectionStatus !== 'open' || !activePeerId) return;
+    if (connectionStatus !== 'open' || !activePeerId || !user) return;
     const conversation = conversations.find((c) => c.peerId === activePeerId);
-    if (conversation) void syncHistory(conversation);
+    if (conversation) void syncHistory(conversation, user.user_id);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on reconnect only; re-running for every unrelated `conversations`/`syncHistory` identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeerId]);
 
