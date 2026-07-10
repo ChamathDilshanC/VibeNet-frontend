@@ -142,7 +142,7 @@ export function ChatView({
             if (isMine) {
               // Sender bubble — right aligned, solid blue, white text.
               return (
-                <div key={message.id} className="flex justify-end">
+                <div key={message.id} className="vibe-msg-in flex origin-bottom-right justify-end">
                   <div className="max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] px-4 py-2.5 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
                     <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
                       {message.text}
@@ -158,7 +158,7 @@ export function ChatView({
 
             // Receiver bubble — left aligned, avatar + name, light gray.
             return (
-              <div key={message.id} className="flex items-end gap-2">
+              <div key={message.id} className="vibe-msg-in flex origin-bottom-left items-end gap-2">
                 <Avatar name={conversation.peerUsername} size="small" />
                 <div className="max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
                   <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
