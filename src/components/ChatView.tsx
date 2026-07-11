@@ -16,6 +16,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { motion } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import {
@@ -242,10 +243,11 @@ function MessageRow({
       )}
 
       {isMine ? (
-        // Sender bubble — right aligned, solid blue, white text. Stacked as a
-        // column so the read-receipt avatar can sit just below the bubble at
-        // the bottom-right, outside it.
-        <div className="vibe-msg-in flex flex-1 origin-bottom-right flex-col items-end">
+        // Sender bubble — right aligned, solid blue, white text. Laid out as a
+        // row (items-end) so the read-receipt avatar sits just to the right of
+        // the bubble, completely outside it, with its center level with the
+        // timestamp + double-tick line.
+        <div className="vibe-msg-in flex flex-1 origin-bottom-right items-end justify-end gap-1.5">
           <div className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="sender" />}
@@ -264,15 +266,30 @@ function MessageRow({
             </span>
           </div>
           {showReadReceipt && (
-            // The recipient's avatar, tucked just under the bubble on the right —
-            // an Instagram/Messenger "seen" cue alongside the blue double-tick.
-            <Avatar
-              src={conversation.peerAvatarUrl}
-              name={conversation.peerUsername}
-              size={16}
-              alt={`Seen by ${conversation.peerUsername}`}
-              className="mt-1 ring-1 ring-white"
-            />
+            // The recipient's avatar, tucked just to the right of the bubble and
+            // level with the timestamp/tick line — an Instagram/Messenger "seen"
+            // cue alongside the blue double-tick. The mb-2.5 lifts its center to
+            // the timestamp baseline (matching the bubble's py-2.5 padding).
+            //
+            // Wrapped in a motion.div so that whenever the read marker advances
+            // to a newer message this avatar mounts on the new row and slides
+            // down into place from the previous message's height — a subtle
+            // "descending" seen trail. Keyed by message id so each advance is a
+            // fresh mount that replays the entrance.
+            <motion.div
+              key={message.id}
+              initial={{ y: -40, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              transition={{ type: 'spring', stiffness: 500, damping: 32, mass: 0.7 }}
+              className="mb-2.5 shrink-0">
+              <Avatar
+                src={conversation.peerAvatarUrl}
+                name={conversation.peerUsername}
+                size={16}
+                alt={`Seen by ${conversation.peerUsername}`}
+                className="ring-1 ring-white"
+              />
+            </motion.div>
           )}
         </div>
       ) : (
