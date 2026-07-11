@@ -11,26 +11,27 @@
 
 import { useEffect, useState } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
-import { Button } from '@astryxdesign/core/Button';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Icon } from '@astryxdesign/core/Icon';
-import { Layout, LayoutContent, LayoutFooter } from '@astryxdesign/core/Layout';
+import { Layout, LayoutContent } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
-import { HStack, VStack } from '@astryxdesign/core/Stack';
+import { VStack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import {
   MagnifyingGlassIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
+import { gooeyToast } from 'goey-toast';
 import { ApiError, resolveAvatarUrl } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
+import { PinPromptDialog } from './PinPromptDialog';
 
 interface SearchResult {
   user_id: string;
   username: string;
   display_name?: string;
-  require_pin: boolean;
+  chat_pin_enabled: boolean;
   avatar_url?: string;
 }
 
@@ -67,10 +68,15 @@ export function NewChatDialog({
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const [selected, setSelected] = useState<SearchResult | null>(null);
-  const [pin, setPin] = useState('');
+  // The peer awaiting PIN verification (null when the verify dialog is closed),
+  // plus its transient verify state. Selecting a PIN-protected result opens the
+  // dialog; a wrong code sets pinError, which shakes the boxes.
+  const [pinPeer, setPinPeer] = useState<SearchResult | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
+  const [pinError, setPinError] = useState<string | null>(null);
+  // Bumped on every failed verification so the dialog re-runs its shake even when
+  // the message text is unchanged between attempts.
+  const [pinErrorNonce, setPinErrorNonce] = useState(0);
 
   // Below this length we neither fetch nor show stale results — see the
   // `showResults` render gate below. Transient state otherwise resets for
@@ -104,7 +110,7 @@ export function NewChatDialog({
 
   async function resolvePeer(user: SearchResult, pinValue?: string) {
     setIsStarting(true);
-    setStartError(null);
+    setPinError(null);
     try {
       const path = pinValue
         ? `/api/users/${user.user_id}/key?pin=${encodeURIComponent(pinValue)}`
@@ -124,12 +130,21 @@ export function NewChatDialog({
         publicKey: data.public_key,
         avatarUrl: data.avatar_url ?? user.avatar_url,
       });
+      setPinPeer(null);
       onOpenChange(false);
     } catch (err) {
       if (err instanceof ApiError && err.status === 403) {
-        setStartError('Invalid or expired PIN.');
+        // Wrong PIN: keep the verify dialog open and trigger a shake.
+        setPinError('Incorrect PIN. Try again.');
+        setPinErrorNonce((n) => n + 1);
       } else {
-        setStartError(err instanceof Error ? err.message : 'Could not start this chat.');
+        const message = err instanceof Error ? err.message : 'Could not start this chat.';
+        if (pinPeer) {
+          setPinError(message);
+          setPinErrorNonce((n) => n + 1);
+        } else {
+          gooeyToast.error(message);
+        }
       }
     } finally {
       setIsStarting(false);
@@ -137,136 +152,103 @@ export function NewChatDialog({
   }
 
   function handleSelect(user: SearchResult) {
-    setStartError(null);
-    if (user.require_pin) {
-      setSelected(user);
-      setPin('');
+    setPinError(null);
+    if (user.chat_pin_enabled) {
+      setPinPeer(user);
       return;
     }
     void resolvePeer(user);
   }
 
   return (
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={420} purpose="form">
-      <Layout
-        height="fill"
-        header={
-          <DialogHeader
-            title="New chat"
-            subtitle="Find someone by username to start an encrypted conversation"
-            onOpenChange={onOpenChange}
-          />
-        }
-        content={
-          <LayoutContent padding={4}>
-            <VStack gap={3}>
-              {selected ? (
-                <VStack gap={3}>
-                  <HStack gap={2} vAlign="center">
-                    <Avatar src={resolveAvatarUrl(selected.avatar_url)} name={resultName(selected)} size="small" />
-                    <Text type="body" weight="semibold">
-                      {resultName(selected)}
-                    </Text>
-                  </HStack>
-                  <Text type="supporting" color="secondary">
-                    This account requires a PIN to start a chat. Ask them for
-                    their current 4-digit code.
+    <>
+      <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={420} purpose="form">
+        <Layout
+          height="fill"
+          header={
+            <DialogHeader
+              title="New chat"
+              subtitle="Find someone by username to start an encrypted conversation"
+              onOpenChange={onOpenChange}
+            />
+          }
+          content={
+            <LayoutContent padding={4}>
+              <VStack gap={3}>
+                <TextInput
+                  label="Search by username"
+                  isLabelHidden
+                  placeholder="Search by username"
+                  value={query}
+                  onChange={setQuery}
+                  startIcon={<Icon icon={MagnifyingGlassIcon} size="sm" />}
+                  isLoading={showResults && isSearching}
+                  hasAutoFocus
+                  hasClear
+                />
+
+                {showResults && searchError && (
+                  <Text type="supporting" className="text-red-600 dark:text-red-400">
+                    {searchError}
                   </Text>
-                  <TextInput
-                    label="4-digit PIN"
-                    value={pin}
-                    onChange={setPin}
-                    placeholder="0000"
-                    hasAutoFocus
-                    onEnter={() => {
-                      if (pin.length === 4) void resolvePeer(selected, pin);
-                    }}
-                  />
-                  {startError && (
-                    <Text type="supporting" className="text-red-600 dark:text-red-400">
-                      {startError}
-                    </Text>
-                  )}
-                </VStack>
-              ) : (
-                <>
-                  <TextInput
-                    label="Search by username"
-                    isLabelHidden
-                    placeholder="Search by username"
-                    value={query}
-                    onChange={setQuery}
-                    startIcon={<Icon icon={MagnifyingGlassIcon} size="sm" />}
-                    isLoading={showResults && isSearching}
-                    hasAutoFocus
-                    hasClear
-                  />
+                )}
 
-                  {showResults && searchError && (
-                    <Text type="supporting" className="text-red-600 dark:text-red-400">
-                      {searchError}
-                    </Text>
-                  )}
+                {showResults && results.length > 0 && (
+                  <List>
+                    {results.map((user) => (
+                      <ListItem
+                        key={user.user_id}
+                        label={resultName(user)}
+                        description={
+                          // Surface the handle when it differs from the shown
+                          // name, plus the PIN hint when required.
+                          [
+                            resultName(user) !== user.username ? `@${user.username}` : null,
+                            user.chat_pin_enabled ? 'PIN required' : null,
+                          ]
+                            .filter(Boolean)
+                            .join(' · ') || undefined
+                        }
+                        startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
+                        endContent={
+                          user.chat_pin_enabled ? (
+                            <Icon icon={ShieldCheckIcon} size="sm" />
+                          ) : undefined
+                        }
+                        onClick={() => handleSelect(user)}
+                      />
+                    ))}
+                  </List>
+                )}
 
-                  {showResults && results.length > 0 && (
-                    <List>
-                      {results.map((user) => (
-                        <ListItem
-                          key={user.user_id}
-                          label={resultName(user)}
-                          description={
-                            // Surface the handle when it differs from the shown
-                            // name, plus the PIN hint when required.
-                            [
-                              resultName(user) !== user.username ? `@${user.username}` : null,
-                              user.require_pin ? 'PIN required' : null,
-                            ]
-                              .filter(Boolean)
-                              .join(' · ') || undefined
-                          }
-                          startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
-                          endContent={
-                            user.require_pin ? (
-                              <Icon icon={ShieldCheckIcon} size="sm" />
-                            ) : undefined
-                          }
-                          onClick={() => handleSelect(user)}
-                        />
-                      ))}
-                    </List>
-                  )}
+                {showResults && !isSearching && !searchError && results.length === 0 && (
+                  <Text type="supporting" color="secondary">
+                    No users found.
+                  </Text>
+                )}
+              </VStack>
+            </LayoutContent>
+          }
+        />
+      </Dialog>
 
-                  {showResults && !isSearching && !searchError && results.length === 0 && (
-                    <Text type="supporting" color="secondary">
-                      No users found.
-                    </Text>
-                  )}
-                </>
-              )}
-            </VStack>
-          </LayoutContent>
-        }
-        footer={
-          selected ? (
-            <LayoutFooter hasDivider>
-              <HStack gap={2} hAlign="end">
-                <Button
-                  label="Back"
-                  variant="secondary"
-                  onClick={() => setSelected(null)}
-                />
-                <Button
-                  label="Start chat"
-                  variant="primary"
-                  isLoading={isStarting}
-                  isDisabled={pin.length !== 4}
-                  onClick={() => void resolvePeer(selected, pin)}
-                />
-              </HStack>
-            </LayoutFooter>
-          ) : undefined
-        }
+      {/* PIN verification overlay for protected accounts. Rendered outside the
+          search Dialog so its own backdrop + shake animation own the screen. */}
+      <PinPromptDialog
+        isOpen={pinPeer !== null}
+        peerName={pinPeer ? resultName(pinPeer) : ''}
+        peerAvatarUrl={pinPeer?.avatar_url}
+        isVerifying={isStarting}
+        error={pinError}
+        errorNonce={pinErrorNonce}
+        onSubmit={(code) => {
+          if (pinPeer) void resolvePeer(pinPeer, code);
+        }}
+        onCancel={() => {
+          setPinPeer(null);
+          setPinError(null);
+        }}
       />
-    </Dialog>
+    </>
   );
 }

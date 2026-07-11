@@ -67,7 +67,7 @@ export function Sidebar({
       }
       footer={
         <SideNavSection title="Account" isHeaderHidden>
-          <SideNavItem label="Chat PIN" icon={ShieldCheckIcon} href="#" />
+          <SideNavItem label="Chat PIN" icon={ShieldCheckIcon} href="/settings?tab=pin" />
           <SideNavItem label="Settings" icon={Cog6ToothIcon} href="/settings" />
           <SideNavItem
             label={user?.display_name || user?.username || 'Account'}

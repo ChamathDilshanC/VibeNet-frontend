@@ -11,21 +11,24 @@
 
 'use client';
 
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Button } from '@astryxdesign/core/Button';
 import { Heading } from '@astryxdesign/core/Heading';
 import { Layout, LayoutContent, VStack } from '@astryxdesign/core/Layout';
+import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
+import { Switch } from '@astryxdesign/core/Switch';
 import { Tab, TabList } from '@astryxdesign/core/TabList';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { CameraIcon } from '@heroicons/react/24/solid';
-import { UserCircleIcon } from '@heroicons/react/24/outline';
+import { ShieldCheckIcon, UserCircleIcon } from '@heroicons/react/24/outline';
 import { gooeyToast } from 'goey-toast';
 import { ApiError, resolveAvatarUrl, type AuthUser } from '@/lib/api';
-import { updateProfile, uploadAvatar } from '@/lib/user';
+import { fetchMyPin, updateProfile, updatePinSettings, uploadAvatar, type PinStatus } from '@/lib/user';
 import { useAuth } from '@/hooks/useAuth';
+import { PinInput } from '@/components/PinInput';
 
 // Mirrors validateUsername in the backend's internal/api/handler.go, so the
 // obvious mistakes are caught inline instead of via a 400. Mixed case is
@@ -299,9 +302,191 @@ function ProfilePanel({
   );
 }
 
+// mmss formats a whole number of seconds as "M:SS" for the rotating-PIN countdown.
+function mmss(totalSeconds: number): string {
+  const s = Math.max(0, totalSeconds);
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return `${m}:${rem.toString().padStart(2, '0')}`;
+}
+
+// ChatPinPanel configures the anti-spam chat PIN: a master toggle, a rotating vs.
+// static choice, and — for static — a 6-digit custom PIN. It also shows the code the
+// owner should share right now (with a live countdown for the rotating code).
+function ChatPinPanel({
+  user,
+  onUpdated,
+}: {
+  user: AuthUser;
+  onUpdated: (user: AuthUser) => void;
+}) {
+  const wasEnabled = user.chat_pin_enabled ?? true;
+  const wasType = user.chat_pin_type ?? 'rotating';
+
+  const [enabled, setEnabled] = useState(wasEnabled);
+  const [type, setType] = useState<'rotating' | 'static'>(wasType);
+  const [customPin, setCustomPin] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [status, setStatus] = useState<PinStatus | null>(null);
+  const [remaining, setRemaining] = useState(0);
+
+  const loadStatus = useCallback(async () => {
+    try {
+      setStatus(await fetchMyPin());
+    } catch {
+      // Non-fatal: the settings still work without the live code preview.
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadStatus();
+  }, [loadStatus]);
+
+  // Tick the rotating-code countdown once per second; when it lapses, pull the
+  // fresh code. Only runs while a rotating code with an expiry is on screen.
+  useEffect(() => {
+    if (!status?.expires_at) {
+      setRemaining(0);
+      return;
+    }
+    const expiry = new Date(status.expires_at).getTime();
+    const tick = () => {
+      const secs = Math.round((expiry - Date.now()) / 1000);
+      setRemaining(secs);
+      if (secs <= 0) void loadStatus();
+    };
+    tick();
+    const id = setInterval(tick, 1000);
+    return () => clearInterval(id);
+  }, [status?.expires_at, loadStatus]);
+
+  // Switching *into* static requires a fresh 6-digit PIN; staying on static lets you
+  // keep the existing one (leave the field blank) or replace it (enter a new one).
+  const wasStatic = wasType === 'static';
+  const settingsChanged = enabled !== wasEnabled || type !== wasType;
+  const customPinValid = customPin.length === 6;
+  let canSave = false;
+  if (!enabled) canSave = settingsChanged;
+  else if (type === 'rotating') canSave = settingsChanged;
+  else canSave = wasStatic ? settingsChanged || customPinValid : customPinValid;
+
+  async function handleSave() {
+    if (!canSave || saving) return;
+    setSaving(true);
+    try {
+      const next = await updatePinSettings({
+        enabled,
+        type,
+        customPin: type === 'static' && customPinValid ? customPin : undefined,
+      });
+      setStatus(next);
+      setCustomPin('');
+      onUpdated({ ...user, chat_pin_enabled: next.enabled, chat_pin_type: next.type });
+      gooeyToast.success('Chat PIN settings saved.');
+    } catch (err) {
+      gooeyToast.error(err instanceof ApiError ? err.message : 'Could not save your PIN settings.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <VStack gap={6}>
+      {/* Master toggle card */}
+      <div className={`${GLASS_CARD} p-6 sm:p-8`}>
+        <div className="flex items-start gap-4">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[color:var(--vibe-blue)]/10 text-[color:var(--vibe-blue)]">
+            <ShieldCheckIcon className="h-6 w-6" />
+          </span>
+          <div className="flex-1">
+            <Switch
+              label="Require a PIN to start a chat"
+              description="Strangers must enter your current PIN before they can message you — your defence against spam."
+              value={enabled}
+              onChange={setEnabled}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Configuration card — only meaningful while enabled */}
+      {enabled && (
+        <div className={`${GLASS_CARD} p-6 sm:p-8`}>
+          <VStack gap={5}>
+            <VStack gap={1}>
+              <Heading level={2}>PIN type</Heading>
+              <Text type="supporting" color="secondary">
+                Choose how your PIN is generated.
+              </Text>
+            </VStack>
+
+            <SegmentedControl
+              value={type}
+              onChange={(v) => setType(v as 'rotating' | 'static')}
+              label="PIN type"
+            >
+              <SegmentedControlItem value="rotating" label="Randomly Rotating (5-min)" />
+              <SegmentedControlItem value="static" label="Custom Static PIN" />
+            </SegmentedControl>
+
+            {type === 'rotating' ? (
+              <div className="rounded-2xl border border-white/60 bg-white/60 p-5 text-center">
+                <Text type="supporting" color="secondary">
+                  Your current code — shared codes change every 5 minutes.
+                </Text>
+                <div className="mt-2 font-mono text-3xl font-semibold tracking-[0.3em] text-slate-900">
+                  {status?.pin ?? '••••••'}
+                </div>
+                {remaining > 0 && (
+                  <Text type="supporting" color="secondary">
+                    Refreshes in {mmss(remaining)}
+                  </Text>
+                )}
+              </div>
+            ) : (
+              <VStack gap={2}>
+                <Text type="supporting" color="secondary">
+                  {wasStatic
+                    ? 'Enter a new 6-digit PIN to change it, or leave blank to keep your current one.'
+                    : 'Set a 6-digit PIN you can share with people you want to reach you.'}
+                </Text>
+                <PinInput
+                  value={customPin}
+                  onChange={setCustomPin}
+                  masked
+                  length={6}
+                  ariaLabel="Custom PIN"
+                />
+              </VStack>
+            )}
+          </VStack>
+        </div>
+      )}
+
+      <div className="flex justify-end">
+        <Button
+          label={saving ? 'Saving…' : 'Save changes'}
+          variant="primary"
+          size="lg"
+          isLoading={saving}
+          isDisabled={!canSave}
+          onClick={() => void handleSave()}
+        />
+      </div>
+    </VStack>
+  );
+}
+
 export default function SettingsPage() {
   const { user, ready, updateUser } = useAuth();
   const [tab, setTab] = useState('profile');
+
+  // Open the Chat PIN tab directly when linked with ?tab=pin (e.g. the sidebar's
+  // "Chat PIN" item). Read on the client to avoid a useSearchParams Suspense bailout.
+  useEffect(() => {
+    const target = new URLSearchParams(window.location.search).get('tab');
+    if (target === 'pin' || target === 'profile') setTab(target);
+  }, []);
 
   // Avoid a flash of protected content before the guard resolves.
   if (!ready) return null;
@@ -323,6 +508,7 @@ export default function SettingsPage() {
 
             <TabList value={tab} onChange={setTab} hasDivider>
               <Tab value="profile" label="Profile" icon={<UserCircleIcon />} />
+              <Tab value="pin" label="Chat PIN" icon={<ShieldCheckIcon />} />
             </TabList>
 
             {/* Keyed on username + real name so the form reseeds after a save, or
@@ -332,6 +518,16 @@ export default function SettingsPage() {
             {user && tab === 'profile' && (
               <ProfilePanel
                 key={`${user.username}:${user.display_name}`}
+                user={user}
+                onUpdated={updateUser}
+              />
+            )}
+
+            {/* Re-keyed on the persisted PIN settings so the controls reseed after a
+                save or a background refresh, rather than holding stale local state. */}
+            {user && tab === 'pin' && (
+              <ChatPinPanel
+                key={`${user.chat_pin_enabled}:${user.chat_pin_type}`}
                 user={user}
                 onUpdated={updateUser}
               />

@@ -35,6 +35,10 @@ export interface AuthUser {
   /** Google account photo, re-synced by the backend on each Google sign-in.
    *  Absent for password accounts, which render initials instead. */
   avatar_url?: string;
+  /** Whether starting a chat with this account requires a PIN. Defaults on. */
+  chat_pin_enabled?: boolean;
+  /** How the required PIN is derived: a 5-minute rotating code or a static custom PIN. */
+  chat_pin_type?: 'rotating' | 'static';
 }
 
 export interface AuthResult {

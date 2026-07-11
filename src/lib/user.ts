@@ -25,6 +25,36 @@ export function updateProfile(username: string, displayName: string): Promise<Au
   });
 }
 
+// Chat-PIN status returned by GET /api/user/my-pin and PUT /api/user/settings/pin.
+// `pin` is the code the owner should share right now (the static custom PIN, or the
+// active rotating code); empty when disabled, or when static is chosen without a PIN
+// set yet. `expires_at` is present only for rotating codes.
+export interface PinStatus {
+  enabled: boolean;
+  type: 'rotating' | 'static';
+  pin: string;
+  expires_at?: string;
+}
+
+// GET /api/user/my-pin — the owner's current chat-PIN status and shareable code.
+export function fetchMyPin(): Promise<PinStatus> {
+  return apiClient.get<PinStatus>('/api/user/my-pin');
+}
+
+// PUT /api/user/settings/pin — persists the chat-PIN configuration. `customPin` is
+// only sent for the static type; omit it to keep a previously-set custom PIN.
+export function updatePinSettings(input: {
+  enabled: boolean;
+  type: 'rotating' | 'static';
+  customPin?: string;
+}): Promise<PinStatus> {
+  return apiClient.put<PinStatus>('/api/user/settings/pin', {
+    enabled: input.enabled,
+    type: input.type,
+    ...(input.customPin !== undefined ? { custom_pin: input.customPin } : {}),
+  });
+}
+
 // POST /api/user/avatar — uploads a new profile picture as multipart/form-data and
 // returns the updated profile (with the new absolute avatar_url). The backend also
 // broadcasts a user_update so peers refresh the picture live.
