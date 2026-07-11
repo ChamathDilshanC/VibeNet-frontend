@@ -25,9 +25,12 @@ import {
 } from '@/lib/conversations';
 import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
 import {
+  deleteMessage,
   getMessages,
   markOwnMessagesRead,
   mergeMessages,
+  setMessageKept,
+  setMessagePinned,
   setMessageStatus,
   type ChatMessage,
 } from '@/lib/messageStore';
@@ -35,6 +38,7 @@ import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
 import { EmptyState } from './EmptyState';
+import { ForwardDialog } from './ForwardDialog';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
 import { Sidebar } from './Sidebar';
 
@@ -43,7 +47,7 @@ import { Sidebar } from './Sidebar';
 // message fields are present only on chat frames, `delivered` only on acks,
 // and `chat_room_id` identifies the room for acks and read receipts alike.
 interface InboundFrame {
-  type?: 'message' | 'ack' | 'read' | 'presence';
+  type?: 'message' | 'ack' | 'read' | 'presence' | 'pin_message' | 'delete_message';
   message_id?: string;
   sender_id?: string;
   chat_room_id?: string;
@@ -91,6 +95,8 @@ export function DashboardShell({
   const [messagesByRoom, setMessagesByRoom] = useState<Record<string, ChatMessage[]>>({});
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // The message currently being forwarded, if any — drives the ForwardDialog.
+  const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null);
   // Peer IDs currently reported online by the hub (see the presence poll below).
   const [onlinePeers, setOnlinePeers] = useState<Set<string>>(new Set());
 
@@ -338,6 +344,24 @@ export function DashboardShell({
         return;
       }
 
+      // "Delete for everyone" broadcast: drop the message from our cache too.
+      if (frame.type === 'delete_message') {
+        if (frame.chat_room_id && frame.message_id) {
+          const updated = deleteMessage(frame.chat_room_id, frame.message_id);
+          setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
+        }
+        return;
+      }
+
+      // Pin broadcast: someone pinned a message for the whole room — mirror it.
+      if (frame.type === 'pin_message') {
+        if (frame.chat_room_id && frame.message_id) {
+          const updated = setMessagePinned(frame.chat_room_id, frame.message_id, true);
+          setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
+        }
+        return;
+      }
+
       const {
         sender_id: senderId,
         chat_room_id: chatRoomId,
@@ -495,6 +519,94 @@ export function DashboardShell({
     }
   }
 
+  // ── Per-message actions (surfaced by ChatView's context menu) ──────────────
+  // These operate on the open conversation's room: ChatView only renders the
+  // active conversation, so every message it hands back belongs to it.
+
+  function handleTogglePin(message: ChatMessage) {
+    if (!activeConversation) return;
+    const room = activeConversation.chatRoomId;
+    const nextPinned = !message.pinned;
+    const updated = setMessagePinned(room, message.id, nextPinned);
+    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
+    if (nextPinned) {
+      // Broadcast the pin to everyone in the room; local mirror is already set.
+      send({ type: 'pin_message', message_id: message.id, chat_room_id: room });
+      gooeyToast('Message pinned');
+    } else {
+      // Unpin has no broadcast frame defined — clear it locally only.
+      gooeyToast('Message unpinned');
+    }
+  }
+
+  function handleToggleKeep(message: ChatMessage) {
+    if (!activeConversation) return;
+    const room = activeConversation.chatRoomId;
+    const nextKept = !message.kept;
+    const updated = setMessageKept(room, message.id, nextKept);
+    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
+    gooeyToast(nextKept ? 'Added to Kept' : 'Removed from Kept');
+  }
+
+  function handleDeleteForMe(message: ChatMessage) {
+    if (!activeConversation) return;
+    const room = activeConversation.chatRoomId;
+    const updated = deleteMessage(room, message.id);
+    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
+  }
+
+  function handleDeleteForEveryone(message: ChatMessage) {
+    if (!activeConversation) return;
+    const room = activeConversation.chatRoomId;
+    const updated = deleteMessage(room, message.id);
+    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
+    // Ask the hub to broadcast the deletion (and drop it from DynamoDB).
+    send({ type: 'delete_message', message_id: message.id, chat_room_id: room });
+    gooeyToast('Message deleted for everyone');
+  }
+
+  // Forward re-encrypts the already-decrypted plaintext under the chosen
+  // contact's shared key and sends fresh ciphertext — the hallmark of E2EE
+  // forwarding: the server never sees plaintext and can't reuse the original
+  // ciphertext, which was encrypted for a different recipient.
+  async function handleForward(peerId: string, message: ChatMessage | null) {
+    if (!user || !message) return;
+    const target = conversations.find((c) => c.peerId === peerId);
+    if (!target) return;
+    try {
+      const sharedKey = await getSharedKey(target);
+      if (!sharedKey) throw new Error('Encryption keys are not ready yet.');
+
+      const { ciphertext, nonce } = await encryptText(sharedKey, message.text);
+      const messageId = crypto.randomUUID();
+      const timestamp = Date.now();
+
+      const enqueued = send({
+        type: 'message',
+        message_id: messageId,
+        receiver_id: target.peerId,
+        chat_room_id: target.chatRoomId,
+        ciphertext,
+        nonce,
+        timestamp,
+      });
+      if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
+
+      recordMessage(target.chatRoomId, {
+        id: messageId,
+        senderId: user.user_id,
+        text: message.text,
+        timestamp,
+        status: 'sent',
+      });
+      gooeyToast(`Forwarded to ${target.peerUsername}`);
+    } catch (err) {
+      gooeyToast('Could not forward message', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    }
+  }
+
   const activeConversation = conversations.find((c) => c.peerId === activePeerId) ?? null;
   const activeMessages = activeConversation
     ? (messagesByRoom[activeConversation.chatRoomId] ?? getMessages(activeConversation.chatRoomId))
@@ -559,6 +671,11 @@ export function DashboardShell({
           isSending={isSending}
           sendError={sendError}
           connectionStatus={connectionStatus}
+          onForward={setForwardingMessage}
+          onTogglePin={handleTogglePin}
+          onToggleKeep={handleToggleKeep}
+          onDeleteForMe={handleDeleteForMe}
+          onDeleteForEveryone={handleDeleteForEveryone}
         />
       ) : (
         <Layout
@@ -592,6 +709,18 @@ export function DashboardShell({
           onOpenChange={setIsNewChatOpen}
           currentUserId={user.user_id}
           onStart={handleStartConversation}
+        />
+      )}
+
+      {user && (
+        <ForwardDialog
+          isOpen={forwardingMessage !== null}
+          onOpenChange={(open) => {
+            if (!open) setForwardingMessage(null);
+          }}
+          conversations={conversations}
+          messagePreview={forwardingMessage?.text ?? ''}
+          onForward={(peerId) => handleForward(peerId, forwardingMessage)}
         />
       )}
     </AppShell>

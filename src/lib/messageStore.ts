@@ -25,6 +25,12 @@ export interface ChatMessage {
   text: string;
   timestamp: number;
   status?: MessageStatus;
+  /** Pinned for the whole room (see pin_message over the WebSocket). Local mirror
+   *  of the shared pin state so the bubble + pinned banner render without a refetch. */
+  pinned?: boolean;
+  /** "Kept"/starred by this user for quick access — a purely local flag, never
+   *  sent over the wire. Persisted here so it survives a reload like the message. */
+  kept?: boolean;
 }
 
 function storageKey(chatRoomId: string): string {
@@ -60,7 +66,20 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
   const byId = new Map(existing.map((m) => [m.id, m]));
   for (const message of incoming) {
     const prev = byId.get(message.id);
-    byId.set(message.id, prev ? { ...message, status: mergeStatus(prev.status, message.status) } : message);
+    // Fold in the incoming copy but never lose the local-only flags: history/live
+    // frames carry neither `pinned` nor `kept`, so a naive overwrite would clear a
+    // message the user had just pinned or kept. Status still only moves forward.
+    byId.set(
+      message.id,
+      prev
+        ? {
+            ...message,
+            status: mergeStatus(prev.status, message.status),
+            pinned: message.pinned ?? prev.pinned,
+            kept: message.kept ?? prev.kept,
+          }
+        : message,
+    );
   }
   const next = Array.from(byId.values()).sort((a, b) => a.timestamp - b.timestamp);
   window.localStorage.setItem(storageKey(chatRoomId), JSON.stringify(next));
@@ -92,4 +111,51 @@ export function markOwnMessagesRead(chatRoomId: string, myUserId: string): ChatM
   );
   window.localStorage.setItem(storageKey(chatRoomId), JSON.stringify(messages));
   return messages;
+}
+
+function writeMessages(chatRoomId: string, messages: ChatMessage[]): ChatMessage[] {
+  if (typeof window === 'undefined') return messages;
+  window.localStorage.setItem(storageKey(chatRoomId), JSON.stringify(messages));
+  return messages;
+}
+
+// deleteMessage drops a message from the local cache entirely. Used by both
+// "delete for me" (local only) and "delete for everyone" (local + a
+// delete_message broadcast) — the WebSocket side is the caller's concern; this
+// only touches what's stored on this device. Returns the remaining messages.
+export function deleteMessage(chatRoomId: string, messageId: string): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(
+    chatRoomId,
+    getMessages(chatRoomId).filter((m) => m.id !== messageId),
+  );
+}
+
+// setMessagePinned toggles a message's room-wide pinned flag in the local cache.
+// Pinning is shared (broadcast over the socket); this keeps the local mirror in
+// step so the bubble and the pinned banner update immediately.
+export function setMessagePinned(
+  chatRoomId: string,
+  messageId: string,
+  pinned: boolean,
+): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(
+    chatRoomId,
+    getMessages(chatRoomId).map((m) => (m.id === messageId ? { ...m, pinned } : m)),
+  );
+}
+
+// setMessageKept toggles this user's local "kept"/starred flag for a message.
+// Purely local — never leaves the device — but persisted so it survives reloads.
+export function setMessageKept(
+  chatRoomId: string,
+  messageId: string,
+  kept: boolean,
+): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(
+    chatRoomId,
+    getMessages(chatRoomId).map((m) => (m.id === messageId ? { ...m, kept } : m)),
+  );
 }
