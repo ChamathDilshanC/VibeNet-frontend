@@ -36,6 +36,8 @@ export function Sidebar({
   onlinePeers,
   onSelectConversation,
   onNewChat,
+  onContacts,
+  isContactsActive,
   onLogout,
 }: {
   user: AuthUser | null;
@@ -44,6 +46,8 @@ export function Sidebar({
   onlinePeers: ReadonlySet<string>;
   onSelectConversation: (peerId: string) => void;
   onNewChat: () => void;
+  onContacts: () => void;
+  isContactsActive: boolean;
   onLogout: () => void;
 }) {
   return (
@@ -94,7 +98,12 @@ export function Sidebar({
           icon={MagnifyingGlassIcon}
           onClick={onNewChat}
         />
-        <SideNavItem label="Contacts" icon={UsersIcon} href="#" />
+        <SideNavItem
+          label="Contacts"
+          icon={UsersIcon}
+          onClick={onContacts}
+          isSelected={isContactsActive}
+        />
       </SideNavSection>
       <Divider />
       <SideNavSection title="Direct messages">

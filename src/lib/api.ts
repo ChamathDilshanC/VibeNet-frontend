@@ -10,14 +10,35 @@ export const API_BASE_URL = (
 
 // resolveAvatarUrl turns a stored avatar reference into a loadable image URL.
 //
-// Uploaded avatars are persisted by the backend as origin-relative paths
-// (e.g. "/uploads/avatars/x.jpg") so the value stays correct across
-// environments; those are prefixed with the API origin here. References that
-// are already absolute — Google account photos (http/https), local file
-// previews (blob:), or inline data: URIs — are returned unchanged.
+// Uploaded avatars are backend-served under "/uploads/…". We always rebase
+// those onto the configured API origin (API_BASE_URL) so they load from the
+// backend regardless of how the reference was stored — whether it is a clean
+// origin-relative path ("/uploads/avatars/x.jpg") or an absolute URL that was
+// baked in against a now-dead host (e.g. "http://localhost:8080/uploads/…"
+// left over from local dev or a stale build). Without this rebase such absolute
+// URLs are handed straight to the browser and fail with ERR_CONNECTION_REFUSED.
+//
+// Genuinely external references — Google account photos (any other https host),
+// local file previews (blob:), or inline data: URIs — are returned unchanged.
 export function resolveAvatarUrl(url?: string): string | undefined {
   if (!url) return undefined;
-  if (/^(?:https?:|blob:|data:)/i.test(url)) return url;
+  if (/^(?:blob:|data:)/i.test(url)) return url;
+
+  // Absolute http(s) URL: only rebase it if it points at an uploads path;
+  // otherwise it's an external image (e.g. a Google avatar) — leave it alone.
+  if (/^https?:/i.test(url)) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.pathname.startsWith('/uploads/')) {
+        return `${API_BASE_URL}${parsed.pathname}${parsed.search}`;
+      }
+    } catch {
+      // Malformed absolute URL — fall through and return it untouched below.
+    }
+    return url;
+  }
+
+  // Relative reference (the normal case for freshly uploaded avatars).
   return `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
 }
 

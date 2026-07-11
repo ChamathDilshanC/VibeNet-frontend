@@ -10,7 +10,7 @@
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Dialog, DialogHeader } from '@astryxdesign/core/Dialog';
 import { Icon } from '@astryxdesign/core/Icon';
@@ -20,6 +20,7 @@ import { VStack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
+import { ShieldCheckIcon } from '@heroicons/react/24/solid';
 import { gooeyToast } from 'goey-toast';
 import { resolveAvatarUrl } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
@@ -29,6 +30,9 @@ interface SearchResult {
   username: string;
   display_name?: string;
   avatar_url?: string;
+  /** Whether starting a chat with this user requires entering THEIR chat PIN.
+   *  Surfaced in the result row (shield + "PIN Required") and drives the PIN gate. */
+  chat_pin_enabled?: boolean;
 }
 
 export interface ResolvedPeer {
@@ -37,6 +41,9 @@ export interface ResolvedPeer {
   displayName?: string;
   publicKey: string;
   avatarUrl?: string;
+  /** Carries the target's PIN requirement to the caller so it can gate the room
+   *  on the recipient's PIN before opening. */
+  chatPinEnabled?: boolean;
 }
 
 // The name to show for a search hit: the real name when present, else the handle.
@@ -64,6 +71,8 @@ export function NewChatDialog({
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [isStarting, setIsStarting] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const resultItemRefs = useRef<(HTMLLIElement | null)[]>([]);
 
   // Below this length we neither fetch nor show stale results — see the
   // `showResults` render gate below. Transient state otherwise resets for
@@ -95,6 +104,16 @@ export function NewChatDialog({
     return () => clearTimeout(timer);
   }, [trimmedQuery, currentUserId]);
 
+  useEffect(() => {
+    setActiveIndex(-1);
+    resultItemRefs.current = [];
+  }, [results]);
+
+  useEffect(() => {
+    if (activeIndex < 0) return;
+    resultItemRefs.current[activeIndex]?.scrollIntoView({ block: 'nearest' });
+  }, [activeIndex]);
+
   async function resolvePeer(user: SearchResult) {
     setIsStarting(true);
     try {
@@ -112,8 +131,10 @@ export function NewChatDialog({
         displayName: data.display_name ?? user.display_name ?? user.username,
         publicKey: data.public_key,
         avatarUrl: data.avatar_url ?? user.avatar_url,
+        // The key endpoint doesn't carry the PIN flag; the search hit is the
+        // authoritative source for whether this target is PIN-protected.
+        chatPinEnabled: user.chat_pin_enabled,
       });
-      onOpenChange(false);
     } catch (err) {
       gooeyToast.error(err instanceof Error ? err.message : 'Could not start this chat.');
     } finally {
@@ -122,7 +143,32 @@ export function NewChatDialog({
   }
 
   function handleSelect(user: SearchResult) {
+    if (isStarting) return;
+    // Close the search dialog immediately so the PIN gate (or chat room) can
+    // open on top without stacking two modals.
+    onOpenChange(false);
     void resolvePeer(user);
+  }
+
+  function handleSearchKeyDown(e: KeyboardEvent<HTMLInputElement>) {
+    if (!showResults || results.length === 0 || isStarting) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setActiveIndex((i) => (i < results.length - 1 ? i + 1 : 0));
+      return;
+    }
+
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setActiveIndex((i) => (i <= 0 ? results.length - 1 : i - 1));
+      return;
+    }
+
+    if (e.key === 'Enter' && activeIndex >= 0) {
+      e.preventDefault();
+      handleSelect(results[activeIndex]!);
+    }
   }
 
   return (
@@ -149,6 +195,7 @@ export function NewChatDialog({
                 isLoading={showResults && (isSearching || isStarting)}
                 hasAutoFocus
                 hasClear
+                onKeyDown={handleSearchKeyDown}
               />
 
               {showResults && searchError && (
@@ -159,14 +206,33 @@ export function NewChatDialog({
 
               {showResults && results.length > 0 && (
                 <List>
-                  {results.map((user) => (
+                  {results.map((user, index) => (
                     <ListItem
                       key={user.user_id}
-                      label={resultName(user)}
+                      ref={(el) => {
+                        resultItemRefs.current[index] = el;
+                      }}
+                      label={
+                        user.chat_pin_enabled ? (
+                          <span className="flex min-w-0 items-center gap-2">
+                            <span className="truncate">{resultName(user)}</span>
+                            <span
+                              className="inline-flex flex-shrink-0 items-center gap-1 rounded-full bg-sky-50 px-2 py-0.5 text-xs font-medium text-sky-700 ring-1 ring-inset ring-sky-600/20 dark:bg-sky-500/10 dark:text-sky-300 dark:ring-sky-400/20"
+                              title="This user requires their chat PIN to start a conversation">
+                              <ShieldCheckIcon className="h-3.5 w-3.5" aria-hidden />
+                              PIN Required
+                            </span>
+                          </span>
+                        ) : (
+                          resultName(user)
+                        )
+                      }
                       description={
                         resultName(user) !== user.username ? `@${user.username}` : undefined
                       }
                       startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
+                      isSelected={index === activeIndex}
+                      isDisabled={isStarting}
                       onClick={() => handleSelect(user)}
                     />
                   ))}

@@ -48,6 +48,18 @@ export function verifyPin(pin: string): Promise<{ valid: boolean }> {
   return apiClient.post<{ valid: boolean }>('/api/user/verify-pin', { pin });
 }
 
+// POST /api/users/{id}/verify-pin — validates the PIN entered to START a chat with
+// a target recipient, against THAT recipient's active PIN (their anti-spam gate).
+// Unlike verifyPin (which checks the caller's own PIN), this is the check that
+// gates initiating contact with a PIN-protected user. Resolves on success; rejects
+// with an ApiError (status 403) on a wrong PIN.
+export function verifyPeerPin(peerId: string, pin: string): Promise<{ valid: boolean }> {
+  return apiClient.post<{ valid: boolean }>(
+    `/api/users/${encodeURIComponent(peerId)}/verify-pin`,
+    { pin },
+  );
+}
+
 // PUT /api/user/settings/pin — persists the chat-PIN configuration. `customPin` is
 // only sent for the static type; omit it to keep a previously-set custom PIN.
 export function updatePinSettings(input: {

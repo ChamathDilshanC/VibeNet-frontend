@@ -17,11 +17,12 @@ import { Text } from '@astryxdesign/core/Text';
 import { gooeyToast } from 'goey-toast';
 import { ApiError, type AuthUser } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
-import { verifyPin } from '@/lib/user';
+import { verifyPeerPin } from '@/lib/user';
 import {
   applyPeerUpdate,
   chatRoomIdFor,
   listConversations,
+  peerName,
   upsertConversation,
   type Conversation,
 } from '@/lib/conversations';
@@ -42,6 +43,7 @@ import {
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
+import { ContactsView } from './ContactsView';
 import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
@@ -58,6 +60,8 @@ interface InboundFrame {
     | 'ack'
     | 'read'
     | 'presence'
+    | 'presence_update'
+    | 'typing'
     | 'pin_message'
     | 'delete_message'
     | 'user_update';
@@ -71,6 +75,12 @@ interface InboundFrame {
   reader_id?: string;
   online?: string[];
   is_forwarded?: boolean;
+  // typing frame: a peer started/stopped composing (sender_id carries who).
+  is_typing?: boolean;
+  // presence_update frame: a peer connected/disconnected (user_id carries who,
+  // last_seen set on the offline transition).
+  is_online?: boolean;
+  last_seen?: number;
   // user_update frame: a peer edited their profile (see UpdateProfile on the
   // backend). Carries public profile fields only, never ciphertext.
   user_id?: string;
@@ -81,6 +91,11 @@ interface InboundFrame {
 // How often to re-query which peers are online (ms). Presence has no push
 // channel, so we poll over the same socket while connected.
 const PRESENCE_POLL_MS = 20_000;
+
+// Clear a peer's typing indicator if no further typing frame arrives within this
+// window — matches the "stop after 3s of silence" requirement and self-heals a
+// missed "stopped" frame.
+const TYPING_TIMEOUT_MS = 3_000;
 
 // Stable empty set for the "nobody known online" case (disconnected), so we
 // don't mint a new Set identity on every render.
@@ -107,11 +122,22 @@ export function DashboardShell({
     user ? listConversations(user.user_id) : [],
   );
   const [activePeerId, setActivePeerId] = useState<string | null>(null);
-  // Single-sided chat-PIN gate: when the current user has chat_pin_enabled, opening
-  // any chat room prompts them for THEIR OWN PIN. Verifying once unlocks the chat
-  // interface for the session; pinPendingPeerId holds the room to open on success.
-  const [chatUnlocked, setChatUnlocked] = useState(false);
-  const [pinPendingPeerId, setPinPendingPeerId] = useState<string | null>(null);
+  // Whether the Contacts directory is showing in the main area instead of a
+  // chat/welcome. Opening any conversation clears it (see openPeer) so picking a
+  // contact returns to the chat view.
+  const [showContacts, setShowContacts] = useState(false);
+  // Chat-PIN gate for NEW conversations only: when the TARGET being messaged has
+  // chat_pin_enabled, starting a chat via username search prompts for THAT
+  // recipient's PIN (their anti-spam gate) before the room opens — verified
+  // server-side against the target's profile. Existing DM sidebar / recent-chat
+  // clicks bypass the gate (contact already established). pinPendingConversation
+  // holds the not-yet-persisted conversation to open once its PIN is verified;
+  // it is intentionally NOT saved until then, so cancelling can't leave a
+  // PIN-free openable entry in the sidebar.
+  const [pinPendingConversation, setPinPendingConversation] = useState<Conversation | null>(null);
+  // Targets whose PIN has already been verified this session, so re-initiating a
+  // chat with the same person doesn't prompt again.
+  const verifiedPeerIds = useRef<Set<string>>(new Set());
   const [pinVerifying, setPinVerifying] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
   const [pinErrorNonce, setPinErrorNonce] = useState(0);
@@ -126,6 +152,13 @@ export function DashboardShell({
   const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null);
   // Peer IDs currently reported online by the hub (see the presence poll below).
   const [onlinePeers, setOnlinePeers] = useState<Set<string>>(new Set());
+  // Peer IDs currently composing a message to us (drives the typing indicator).
+  const [typingPeers, setTypingPeers] = useState<Set<string>>(new Set());
+  // Per-peer last-seen (unix ms), seeded from the key endpoint on open and kept
+  // current by presence_update frames when a peer goes offline.
+  const [lastSeenByPeer, setLastSeenByPeer] = useState<Record<string, number>>({});
+  // Per-peer auto-clear timers for the typing indicator (see TYPING_TIMEOUT_MS).
+  const typingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   // Derived AES-GCM keys are per-peer and deterministic (ECDH) — cache them
   // instead of re-deriving on every message.
@@ -158,7 +191,14 @@ export function DashboardShell({
           public_key: string;
           display_name?: string;
           avatar_url?: string;
+          last_seen?: number;
         }>(`/api/users/${conversation.peerId}/key`);
+        // Seed the peer's last-seen so the header can show it immediately when
+        // they're offline (presence_update only fires on a live transition).
+        if (typeof resolved.last_seen === 'number') {
+          const seen = resolved.last_seen;
+          setLastSeenByPeer((prev) => ({ ...prev, [conversation.peerId]: seen }));
+        }
         const keyChanged = resolved.public_key !== conversation.peerPublicKey;
         // Also backfill the avatar and real name: conversations started before
         // these existed (or from an incoming message) have none cached, so pick
@@ -365,6 +405,75 @@ export function DashboardShell({
         return;
       }
 
+      // Typing indicator: a peer started (is_typing) or stopped composing. Each
+      // "true" (re)arms a 3s auto-clear so a missed "false" still resolves.
+      if (frame.type === 'typing') {
+        const sender = frame.sender_id;
+        if (!sender) return;
+        const timers = typingTimersRef.current;
+        const existing = timers.get(sender);
+        if (existing) clearTimeout(existing);
+
+        const clearTyping = () =>
+          setTypingPeers((prev) => {
+            if (!prev.has(sender)) return prev;
+            const next = new Set(prev);
+            next.delete(sender);
+            return next;
+          });
+
+        if (frame.is_typing) {
+          setTypingPeers((prev) => (prev.has(sender) ? prev : new Set(prev).add(sender)));
+          timers.set(
+            sender,
+            setTimeout(() => {
+              timers.delete(sender);
+              clearTyping();
+            }, TYPING_TIMEOUT_MS),
+          );
+        } else {
+          timers.delete(sender);
+          clearTyping();
+        }
+        return;
+      }
+
+      // Presence transition: a peer connected/disconnected. Only track peers we
+      // actually have a conversation with (mirrors user_update).
+      if (frame.type === 'presence_update') {
+        const uid = frame.user_id;
+        if (!uid || !conversations.some((c) => c.peerId === uid)) return;
+        setOnlinePeers((prev) => {
+          const has = prev.has(uid);
+          if (frame.is_online && !has) return new Set(prev).add(uid);
+          if (!frame.is_online && has) {
+            const next = new Set(prev);
+            next.delete(uid);
+            return next;
+          }
+          return prev;
+        });
+        if (!frame.is_online) {
+          // Offline: record last-seen and drop any lingering typing state.
+          if (typeof frame.last_seen === 'number') {
+            const seen = frame.last_seen;
+            setLastSeenByPeer((prev) => ({ ...prev, [uid]: seen }));
+          }
+          const timer = typingTimersRef.current.get(uid);
+          if (timer) {
+            clearTimeout(timer);
+            typingTimersRef.current.delete(uid);
+          }
+          setTypingPeers((prev) => {
+            if (!prev.has(uid)) return prev;
+            const next = new Set(prev);
+            next.delete(uid);
+            return next;
+          });
+        }
+        return;
+      }
+
       // Delivery ack for a message we sent: grey single → grey double tick.
       if (frame.type === 'ack') {
         if (frame.delivered && frame.chat_room_id && frame.message_id) {
@@ -507,32 +616,40 @@ export function DashboardShell({
 
   const { status: connectionStatus, send } = useChatSocket(handleIncoming);
 
-  // requestOpenPeer is the single entry point for opening a chat room (sidebar
-  // selection, empty-state list, or a freshly-started chat). It enforces the
-  // single-sided PIN gate: if the current user requires a PIN and hasn't unlocked
-  // the interface yet this session, it defers the open until they verify their PIN.
-  const requestOpenPeer = useCallback(
-    (peerId: string) => {
-      if (!peerId) return;
-      if (user?.chat_pin_enabled === true && !chatUnlocked) {
-        setPinError(null);
-        setPinPendingPeerId(peerId);
-        return;
-      }
-      setActivePeerId(peerId);
-    },
-    [user?.chat_pin_enabled, chatUnlocked],
-  );
+  // openPeer opens an existing conversation immediately — sidebar DM rows and
+  // the empty-state "Recent chats" list use this path and never trigger the PIN gate.
+  const openPeer = useCallback((peerId: string) => {
+    if (!peerId) return;
+    setShowContacts(false);
+    setActivePeerId(peerId);
+  }, []);
+
+  // Persists a conversation into the client registry and opens it. Used once a
+  // new chat is cleared to open — either immediately (no target PIN) or after the
+  // target's PIN is verified.
+  const persistAndOpen = useCallback((ownerId: string, conversation: Conversation) => {
+    setConversations(upsertConversation(ownerId, conversation));
+    setMessagesByRoom((prev) =>
+      prev[conversation.chatRoomId]
+        ? prev
+        : { ...prev, [conversation.chatRoomId]: getMessages(conversation.chatRoomId) },
+    );
+    setShowContacts(false);
+    setActivePeerId(conversation.peerId);
+  }, []);
 
   async function submitChatPin(code: string) {
+    const target = pinPendingConversation;
+    if (!user || !target) return;
     setPinVerifying(true);
     try {
-      await verifyPin(code);
-      setChatUnlocked(true);
-      const target = pinPendingPeerId;
-      setPinPendingPeerId(null);
+      // Verify against the TARGET recipient's PIN profile, not the caller's own.
+      await verifyPeerPin(target.peerId, code);
+      verifiedPeerIds.current.add(target.peerId);
+      setPinPendingConversation(null);
       setPinError(null);
-      if (target) setActivePeerId(target);
+      // Only now is the conversation saved + opened — never before verification.
+      persistAndOpen(user.user_id, target);
     } catch (err) {
       // Wrong PIN (403) or any other failure: keep the dialog open and shake.
       setPinError(
@@ -540,7 +657,7 @@ export function DashboardShell({
           ? 'Incorrect PIN. Try again.'
           : err instanceof Error
             ? err.message
-            : 'Could not verify your PIN.',
+            : 'Could not verify the PIN.',
       );
       setPinErrorNonce((n) => n + 1);
     } finally {
@@ -559,15 +676,23 @@ export function DashboardShell({
       chatRoomId: chatRoomIdFor(user.user_id, peer.userId),
       createdAt: Date.now(),
     };
-    setConversations(upsertConversation(user.user_id, conversation));
-    setMessagesByRoom((prev) =>
-      prev[conversation.chatRoomId]
-        ? prev
-        : { ...prev, [conversation.chatRoomId]: getMessages(conversation.chatRoomId) },
-    );
-    // Gate the actual room open behind the current user's PIN. History sync runs
-    // from the effect keyed off activePeerId once the room is opened.
-    requestOpenPeer(peer.userId);
+    // Gate on the TARGET's PIN requirement, not the current user's. Already-verified
+    // targets (this session) skip straight through.
+    const needsPin =
+      peer.chatPinEnabled === true && !verifiedPeerIds.current.has(peer.userId);
+    // Search dialog closes on select; defer one frame so the overlay stack never
+    // shows two dialogs at once, then either prompt for the target's PIN or open.
+    setIsNewChatOpen(false);
+    setShowContacts(false);
+    requestAnimationFrame(() => {
+      if (needsPin) {
+        // Hold the conversation unsaved until the PIN is verified (see submitChatPin).
+        setPinError(null);
+        setPinPendingConversation(conversation);
+        return;
+      }
+      persistAndOpen(user.user_id, conversation);
+    });
   }
 
   // Fetches history whenever the active conversation changes (new chat
@@ -769,6 +894,15 @@ export function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-subscribing on its identity change would needlessly reset the poll.
   }, [connectionStatus, peerIdsKey]);
 
+  // Clear any pending typing auto-clear timers on unmount.
+  useEffect(() => {
+    const timers = typingTimersRef.current;
+    return () => {
+      timers.forEach((t) => clearTimeout(t));
+      timers.clear();
+    };
+  }, []);
+
   // While disconnected we can't trust the last snapshot, so show everyone
   // offline until the socket reopens and the poll refreshes it.
   const visibleOnlinePeers = connectionStatus === 'open' ? onlinePeers : NO_ONLINE_PEERS;
@@ -783,15 +917,27 @@ export function DashboardShell({
           conversations={conversations}
           activePeerId={activePeerId}
           onlinePeers={visibleOnlinePeers}
-          onSelectConversation={requestOpenPeer}
+          onSelectConversation={openPeer}
           onNewChat={() => {
             setNewChatSession((n) => n + 1);
             setIsNewChatOpen(true);
           }}
+          onContacts={() => setShowContacts(true)}
+          isContactsActive={showContacts}
           onLogout={onLogout}
         />
       }>
-      {activeConversation ? (
+      {showContacts ? (
+        <ContactsView
+          conversations={conversations}
+          onlinePeers={visibleOnlinePeers}
+          onSelectContact={openPeer}
+          onNewChat={() => {
+            setNewChatSession((n) => n + 1);
+            setIsNewChatOpen(true);
+          }}
+        />
+      ) : activeConversation ? (
         <ChatView
           conversation={activeConversation}
           messages={activeMessages}
@@ -800,6 +946,17 @@ export function DashboardShell({
           isSending={isSending}
           sendError={sendError}
           connectionStatus={connectionStatus}
+          isPeerOnline={visibleOnlinePeers.has(activeConversation.peerId)}
+          peerLastSeen={lastSeenByPeer[activeConversation.peerId] ?? null}
+          isPeerTyping={typingPeers.has(activeConversation.peerId)}
+          onTyping={(isTyping) =>
+            send({
+              type: 'typing',
+              receiver_id: activeConversation.peerId,
+              chat_room_id: activeConversation.chatRoomId,
+              is_typing: isTyping,
+            })
+          }
           onForward={setForwardingMessage}
           onTogglePin={handleTogglePin}
           onToggleKeep={handleToggleKeep}
@@ -823,7 +980,7 @@ export function DashboardShell({
                 <EmptyState
                   conversations={conversations}
                   onlinePeers={visibleOnlinePeers}
-                  onSelect={requestOpenPeer}
+                  onSelect={openPeer}
                 />
               </VStack>
             </LayoutContent>
@@ -841,26 +998,29 @@ export function DashboardShell({
         />
       )}
 
-      {/* Single-sided PIN gate: the current user enters their own PIN to unlock the
-          chat interface before a room opens. */}
+      {/* PIN gate for new-chat initiation only — verifies the TARGET recipient's
+          PIN. Existing sidebar DMs (established contacts) open directly. */}
       {user && (
         <PinPromptDialog
-          isOpen={pinPendingPeerId !== null}
-          avatarName={user.display_name || user.username}
-          avatarUrl={user.avatar_url}
-          subtitle={(() => {
-            const peer = conversations.find((c) => c.peerId === pinPendingPeerId);
-            const name = peer ? peer.peerDisplayName || peer.peerUsername : null;
-            return name
-              ? `Enter your 6-digit chat PIN to open your conversation with ${name}.`
-              : 'Enter your 6-digit chat PIN to unlock your conversations.';
-          })()}
+          isOpen={pinPendingConversation !== null}
+          title={
+            pinPendingConversation
+              ? `Enter ${peerName(pinPendingConversation)}'s chat PIN`
+              : 'Enter chat PIN'
+          }
+          avatarName={pinPendingConversation ? peerName(pinPendingConversation) : ''}
+          avatarUrl={pinPendingConversation?.peerAvatarUrl}
+          subtitle={
+            pinPendingConversation
+              ? `${peerName(pinPendingConversation)} protects new chats with a PIN. Enter their 6-digit code to start the conversation.`
+              : 'Enter the 6-digit chat PIN to start this conversation.'
+          }
           isVerifying={pinVerifying}
           error={pinError}
           errorNonce={pinErrorNonce}
           onSubmit={(code) => void submitChatPin(code)}
           onCancel={() => {
-            setPinPendingPeerId(null);
+            setPinPendingConversation(null);
             setPinError(null);
           }}
         />

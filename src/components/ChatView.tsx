@@ -16,7 +16,7 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { motion, useMotionValue, useTransform } from 'framer-motion';
+import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import {
@@ -41,6 +41,7 @@ import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { MessageContextMenu } from './MessageContextMenu';
+import { TypingIndicator } from './TypingIndicator';
 
 const CONNECTION_LABEL: Record<ChatSocketStatus, string> = {
   open: 'Connected',
@@ -66,6 +67,22 @@ function formatTime(timestamp: number): string {
     minute: '2-digit',
     hour12: false,
   });
+}
+
+// Human "last seen" line for an offline peer, e.g. "Last seen today at 10:30 AM".
+// Uses native Intl only — no date library. Null/unknown reads as a plain "Offline".
+function formatLastSeen(ts?: number | null): string {
+  if (!ts) return 'Offline';
+  const then = new Date(ts);
+  const time = then.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true });
+  const startOfDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+  const dayDiff = Math.round((startOfDay(new Date()) - startOfDay(then)) / 86_400_000);
+  if (dayDiff <= 0) return `Last seen today at ${time}`;
+  if (dayDiff === 1) return `Last seen yesterday at ${time}`;
+  if (dayDiff < 7) {
+    return `Last seen ${then.toLocaleDateString([], { weekday: 'long' })} at ${time}`;
+  }
+  return `Last seen ${then.toLocaleDateString([], { month: 'short', day: 'numeric' })} at ${time}`;
 }
 
 function isSameDay(a: number, b: number): boolean {
@@ -390,6 +407,10 @@ export function ChatView({
   isSending,
   sendError,
   connectionStatus,
+  isPeerOnline,
+  peerLastSeen,
+  isPeerTyping,
+  onTyping,
   onForward,
   onTogglePin,
   onToggleKeep,
@@ -403,6 +424,14 @@ export function ChatView({
   isSending: boolean;
   sendError: string | null;
   connectionStatus: ChatSocketStatus;
+  /** Whether the peer currently has a live WebSocket connection. */
+  isPeerOnline: boolean;
+  /** Peer's last-seen time (unix ms), shown when offline. */
+  peerLastSeen?: number | null;
+  /** Whether the peer is currently composing — drives the typing indicator. */
+  isPeerTyping: boolean;
+  /** Notify the peer that we started/stopped composing (throttled here). */
+  onTyping: (isTyping: boolean) => void;
   onForward: (message: ChatMessage) => void;
   onTogglePin: (message: ChatMessage) => void;
   onToggleKeep: (message: ChatMessage) => void;
@@ -417,9 +446,53 @@ export function ChatView({
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  // Typing-notify bookkeeping: `typingActiveRef` tracks whether we've told the
+  // peer we're typing (so we send "true" once, not per keystroke); the idle timer
+  // sends "false" after a short pause. onTyping is read through a ref so these
+  // handlers don't need to be recreated when its identity changes.
+  const typingActiveRef = useRef(false);
+  const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onTypingRef = useRef(onTyping);
+  useEffect(() => {
+    onTypingRef.current = onTyping;
+  }, [onTyping]);
+
+  function stopTyping() {
+    if (typingIdleTimerRef.current) {
+      clearTimeout(typingIdleTimerRef.current);
+      typingIdleTimerRef.current = null;
+    }
+    if (typingActiveRef.current) {
+      typingActiveRef.current = false;
+      onTypingRef.current(false);
+    }
+  }
+
+  function notifyTyping() {
+    if (!typingActiveRef.current) {
+      typingActiveRef.current = true;
+      onTypingRef.current(true);
+    }
+    if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
+    // Fall back to "stopped" after a pause; the receiver also self-clears at 3s.
+    typingIdleTimerRef.current = setTimeout(stopTyping, 2500);
+  }
+
+  // Switching conversations (or unmounting): forget our local typing state
+  // without emitting to the new peer — the old peer's indicator self-clears via
+  // its 3-second timeout.
+  useEffect(() => {
+    return () => {
+      if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
+      typingActiveRef.current = false;
+    };
+  }, [conversation.peerId]);
+
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
-  }, [messages.length]);
+    // Re-scroll when the typing bubble appears so it stays in view below the
+    // last message.
+  }, [messages.length, isPeerTyping]);
 
   // A message deleted while it was the reply target shouldn't leave a preview
   // pointing at nothing — derive the live target rather than clearing state in
@@ -430,6 +503,8 @@ export function ChatView({
   function handleSend() {
     const text = draft.trim();
     if (!text) return;
+    // Sending implies we've stopped composing — clear the peer's indicator now.
+    stopTyping();
     // When a reply is active, capture a compact snapshot of the quoted message
     // so it rides inside the encrypted payload and renders as an in-bubble quote
     // on both ends. "You" stands in for our own messages.
@@ -561,13 +636,32 @@ export function ChatView({
             <span className="truncate text-sm font-semibold text-gray-900">
               {peerName(conversation)}
             </span>
-            <span className="text-xs text-gray-500">{CONNECTION_LABEL[connectionStatus]}</span>
+            {/* Live peer status: typing → online (glowing green) → last seen. */}
+            {isPeerTyping ? (
+              <span className="text-xs font-medium text-[var(--vibe-blue)]">typing…</span>
+            ) : isPeerOnline ? (
+              <span className="flex items-center gap-1.5 text-xs font-medium text-[#277a0c]">
+                <span className="relative flex h-2 w-2">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-70" />
+                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)]" />
+                </span>
+                Online
+              </span>
+            ) : (
+              <span className="truncate text-xs text-gray-500">{formatLastSeen(peerLastSeen)}</span>
+            )}
           </div>
-          <StatusDot
-            className="ml-auto"
-            variant={CONNECTION_VARIANT[connectionStatus]}
-            label={CONNECTION_LABEL[connectionStatus]}
-          />
+          {/* Own-connection hint only when realtime is degraded — no static
+              "Connected" noise in the normal (open) case. */}
+          {connectionStatus !== 'open' && (
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
+              <StatusDot
+                variant={CONNECTION_VARIANT[connectionStatus]}
+                label={CONNECTION_LABEL[connectionStatus]}
+              />
+              {CONNECTION_LABEL[connectionStatus]}
+            </span>
+          )}
         </header>
       )}
 
@@ -633,6 +727,27 @@ export function ChatView({
               </Fragment>
             );
           })}
+
+          {/* Typing indicator — appears as an incoming bubble after the last
+              message while the peer is composing. */}
+          <AnimatePresence>
+            {isPeerTyping && (
+              <motion.div
+                initial={{ opacity: 0, y: 8, scale: 0.96 }}
+                animate={{ opacity: 1, y: 0, scale: 1 }}
+                exit={{ opacity: 0, y: 8, scale: 0.96 }}
+                transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                className="flex origin-bottom-left items-end gap-2">
+                <Avatar
+                  src={resolveAvatarUrl(conversation.peerAvatarUrl)}
+                  name={peerName(conversation)}
+                  size="small"
+                />
+                <TypingIndicator label={peerName(conversation)} />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
           <div ref={bottomRef} />
         </div>
       </div>
@@ -689,7 +804,13 @@ export function ChatView({
                   activeReply ? 'Type your reply…' : `Message ${peerName(conversation)}`
                 }
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setDraft(value);
+                  if (value.trim()) notifyTyping();
+                  else stopTyping();
+                }}
+                onBlur={stopTyping}
                 className="min-w-0 flex-1 bg-transparent px-1 text-sm text-gray-900 outline-none placeholder:text-gray-400"
               />
 

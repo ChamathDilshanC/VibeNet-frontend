@@ -21,6 +21,7 @@ const PIN_LENGTH = 6;
 
 export function PinPromptDialog({
   isOpen,
+  title = 'Enter your chat PIN',
   avatarName,
   avatarUrl,
   subtitle,
@@ -31,7 +32,11 @@ export function PinPromptDialog({
   onCancel,
 }: {
   isOpen: boolean;
-  /** The current user's name — the avatar/initials shown in the dialog. */
+  /** Dialog heading. Defaults to the self-unlock wording; pass a target-specific
+   *  title (e.g. "Enter Alex's chat PIN") when verifying a recipient's PIN. */
+  title?: string;
+  /** The name whose avatar/initials the dialog shows — the current user for a
+   *  self-unlock, or the target recipient when gating on their PIN. */
   avatarName: string;
   avatarUrl?: string;
   /** Context line under the title, e.g. which chat is being opened. */
@@ -87,7 +92,7 @@ export function PinPromptDialog({
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label="Enter your chat PIN to unlock chats"
+            aria-label={title}
             className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-7 shadow-2xl shadow-slate-900/20 backdrop-blur-xl"
             initial={{ opacity: 0, scale: 0.92, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -109,7 +114,7 @@ export function PinPromptDialog({
               </div>
 
               <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-slate-900">Enter your chat PIN</h2>
+                <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
                 <p className="text-sm text-slate-500">
                   {subtitle ?? 'Enter your 6-digit chat PIN to unlock your conversations.'}
                 </p>
