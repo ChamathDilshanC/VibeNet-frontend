@@ -16,10 +16,11 @@
 'use client';
 
 import { Fragment, useEffect, useRef, useState } from 'react';
-import { motion } from 'framer-motion';
+import { motion, useMotionValue, useTransform } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import {
+  ArrowUturnLeftIcon,
   ArrowUturnRightIcon,
   CheckCircleIcon as CheckCircleOutlineIcon,
   FaceSmileIcon,
@@ -37,7 +38,7 @@ import {
 import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import type { Conversation } from '@/lib/conversations';
-import type { ChatMessage, MessageStatus } from '@/lib/messageStore';
+import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { MessageContextMenu } from './MessageContextMenu';
 
 const CONNECTION_LABEL: Record<ChatSocketStatus, string> = {
@@ -131,6 +132,30 @@ function ForwardedTag({ tone }: { tone: 'sender' | 'receiver' }) {
       <ArrowUturnRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       Forwarded
     </span>
+  );
+}
+
+// WhatsApp-style quoted reply, rendered inside the bubble just above the new
+// message text. A left accent bar plus a muted fill set it apart from the body;
+// the tone matches the bubble it sits on — a translucent white on the blue
+// sender bubble, a black tint on the light receiver bubble — so it never breaks
+// the existing colour scheme. The preview text is pre-truncated by the caller.
+function ReplyQuote({ replyTo, tone }: { replyTo: ReplyPreview; tone: 'sender' | 'receiver' }) {
+  const isSender = tone === 'sender';
+  return (
+    <div
+      className={[
+        'mb-1.5 overflow-hidden rounded-lg border-l-4 py-1 pl-2 pr-2.5',
+        isSender ? 'border-white/70 bg-white/10' : 'border-[var(--vibe-blue)] bg-black/5',
+      ].join(' ')}>
+      <span
+        className={`block text-xs font-semibold ${isSender ? 'text-white' : 'text-[var(--vibe-blue)]'}`}>
+        {replyTo.senderName}
+      </span>
+      <span className={`block truncate text-xs ${isSender ? 'text-white/75' : 'text-gray-500'}`}>
+        {replyTo.textPreview}
+      </span>
+    </div>
   );
 }
 
@@ -230,6 +255,13 @@ function MessageRow({
 
   const SelectMark = isSelected ? CheckCircleSolidIcon : CheckCircleOutlineIcon;
 
+  // Swipe-to-reply: the bubble is draggable on the x-axis; releasing past the
+  // threshold fires the same reply action as the context menu. dragX also drives
+  // a reply-arrow hint that fades in on the left as you pull. Constraints pin it
+  // to x:0 both sides, so it always springs back to rest on release.
+  const dragX = useMotionValue(0);
+  const replyHintOpacity = useTransform(dragX, [0, 60], [0, 1]);
+
   return (
     <div
       {...rowSelectProps}
@@ -245,7 +277,28 @@ function MessageRow({
         />
       )}
 
-      {isMine ? (
+      {/* Swipe-to-reply: drag the bubble to the right to reply. The hint arrow
+          sits behind the bubble and fades in as you pull; releasing past the
+          threshold fires the same onReply as the context menu, then the bubble
+          springs back (dragConstraints pin it to x:0). */}
+      <div className="relative flex min-w-0 flex-1">
+        <motion.div
+          aria-hidden="true"
+          style={{ opacity: replyHintOpacity }}
+          className="pointer-events-none absolute left-1 top-1/2 z-0 -translate-y-1/2 text-[var(--vibe-blue)]">
+          <ArrowUturnLeftIcon className="h-5 w-5" />
+        </motion.div>
+
+        <motion.div
+          drag={selectMode ? false : 'x'}
+          dragConstraints={{ left: 0, right: 0 }}
+          dragElastic={0.2}
+          style={{ x: dragX }}
+          onDragEnd={(_event, info) => {
+            if (info.offset.x > 50) actions.onReply(message);
+          }}
+          className="flex min-w-0 flex-1">
+          {isMine ? (
         // Sender bubble — right aligned, solid blue, white text. Laid out as a
         // row (items-end) so the read-receipt avatar sits just to the right of
         // the bubble, completely outside it, with its center level with the
@@ -254,6 +307,7 @@ function MessageRow({
           <div className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="sender" />}
+            {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="sender" />}
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
               {message.text}
             </p>
@@ -305,6 +359,7 @@ function MessageRow({
             <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
               {conversation.peerUsername}
             </span>
+            {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
               {message.text}
             </p>
@@ -319,7 +374,9 @@ function MessageRow({
             </span>
           </div>
         </div>
-      )}
+          )}
+        </motion.div>
+      </div>
     </div>
   );
 }
@@ -341,7 +398,7 @@ export function ChatView({
   conversation: Conversation;
   messages: ChatMessage[];
   myUserId: string;
-  onSend: (text: string) => void;
+  onSend: (text: string, replyTo?: ReplyPreview) => void;
   isSending: boolean;
   sendError: string | null;
   connectionStatus: ChatSocketStatus;
@@ -372,7 +429,17 @@ export function ChatView({
   function handleSend() {
     const text = draft.trim();
     if (!text) return;
-    onSend(text);
+    // When a reply is active, capture a compact snapshot of the quoted message
+    // so it rides inside the encrypted payload and renders as an in-bubble quote
+    // on both ends. "You" stands in for our own messages.
+    const replyTo: ReplyPreview | undefined = activeReply
+      ? {
+          messageId: activeReply.id,
+          senderName: activeReply.senderId === myUserId ? 'You' : conversation.peerUsername,
+          textPreview: previewText(activeReply.text),
+        }
+      : undefined;
+    onSend(text, replyTo);
     setDraft('');
     setReplyingTo(null);
   }

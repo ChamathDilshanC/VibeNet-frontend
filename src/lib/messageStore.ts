@@ -19,12 +19,27 @@ export type MessageStatus = 'sent' | 'delivered' | 'read';
 
 const STATUS_RANK: Record<MessageStatus, number> = { sent: 0, delivered: 1, read: 2 };
 
+// A compact snapshot of the message being replied to, embedded in the reply so
+// the quoted block renders without having to look the original up (it may have
+// scrolled off, been deleted, or never synced to this device). Carried inside
+// the E2EE payload, so the server never sees any of it in the clear.
+export interface ReplyPreview {
+  /** Id of the quoted message — lets the UI scroll/highlight it if still present. */
+  messageId: string;
+  /** Display name to show above the quote ("You" for our own messages). */
+  senderName: string;
+  /** One-line, already-truncated preview of the quoted message's text. */
+  textPreview: string;
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
   text: string;
   timestamp: number;
   status?: MessageStatus;
+  /** Set when this message is a reply — drives the in-bubble quoted block. */
+  replyTo?: ReplyPreview;
   /** Pinned for the whole room (see pin_message over the WebSocket). Local mirror
    *  of the shared pin state so the bubble + pinned banner render without a refetch. */
   pinned?: boolean;
@@ -34,6 +49,57 @@ export interface ChatMessage {
   /** True when this message was forwarded from another conversation. Renders a
    *  "Forwarded" label at the top of the bubble, WhatsApp/Messenger-style. */
   isForwarded?: boolean;
+}
+
+// ── Encrypted message body envelope ────────────────────────────────────────
+// The plaintext we encrypt used to be the raw message string. To carry reply
+// metadata end-to-end (without ever exposing it to the server) we now wrap the
+// body in a small versioned JSON envelope *before* encryption, and unwrap it
+// after decryption. `v` tags the format; legacy messages predate the envelope
+// and decrypt to a bare string, which decodeMessageBody treats as plain text.
+interface MessageEnvelope {
+  v: 1;
+  text: string;
+  replyTo?: ReplyPreview;
+  isForwarded?: boolean;
+}
+
+// Metadata that rides inside the encrypted envelope alongside the text. Carried
+// here (not in the WebSocket frame) precisely so it reaches the recipient: the
+// backend is a blind router with a fixed frame shape and would drop any extra
+// top-level fields, but it never touches the ciphertext, so envelope metadata
+// survives end-to-end.
+export interface MessageMeta {
+  replyTo?: ReplyPreview;
+  isForwarded?: boolean;
+}
+
+// encodeMessageBody produces the string handed to encryptText — a JSON envelope
+// so the reply context and forwarded flag travel inside the ciphertext with the
+// text. Falsy metadata is omitted to keep the payload compact.
+export function encodeMessageBody(text: string, meta: MessageMeta = {}): string {
+  const envelope: MessageEnvelope = { v: 1, text };
+  if (meta.replyTo) envelope.replyTo = meta.replyTo;
+  if (meta.isForwarded) envelope.isForwarded = true;
+  return JSON.stringify(envelope);
+}
+
+// decodeMessageBody reverses encodeMessageBody on the decrypted string. Anything
+// that isn't a v1 envelope (a pre-envelope plain-text message, or a peer on an
+// older build) falls back to being treated as the whole body — so old and new
+// messages both render correctly.
+export function decodeMessageBody(
+  raw: string,
+): { text: string; replyTo?: ReplyPreview; isForwarded?: boolean } {
+  try {
+    const parsed = JSON.parse(raw) as Partial<MessageEnvelope>;
+    if (parsed && parsed.v === 1 && typeof parsed.text === 'string') {
+      return { text: parsed.text, replyTo: parsed.replyTo, isForwarded: parsed.isForwarded };
+    }
+  } catch {
+    // Not JSON — a legacy plain-text body from before the envelope existed.
+  }
+  return { text: raw };
 }
 
 function storageKey(chatRoomId: string): string {
@@ -81,6 +147,7 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
             pinned: message.pinned ?? prev.pinned,
             kept: message.kept ?? prev.kept,
             isForwarded: message.isForwarded ?? prev.isForwarded,
+            replyTo: message.replyTo ?? prev.replyTo,
           }
         : message,
     );

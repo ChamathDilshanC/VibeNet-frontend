@@ -25,7 +25,9 @@ import {
 } from '@/lib/conversations';
 import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
 import {
+  decodeMessageBody,
   deleteMessage,
+  encodeMessageBody,
   getMessages,
   markOwnMessagesRead,
   mergeMessages,
@@ -33,6 +35,7 @@ import {
   setMessagePinned,
   setMessageStatus,
   type ChatMessage,
+  type ReplyPreview,
 } from '@/lib/messageStore';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
@@ -272,8 +275,16 @@ export function DashboardShell({
           const ok: ChatMessage[] = [];
           for (const m of pending) {
             try {
-              const text = await decryptText(key, m.ciphertext, m.nonce);
-              ok.push({ id: m.message_id, senderId: m.sender_id, text, timestamp: m.timestamp });
+              const plaintext = await decryptText(key, m.ciphertext, m.nonce);
+              const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+              ok.push({
+                id: m.message_id,
+                senderId: m.sender_id,
+                text,
+                timestamp: m.timestamp,
+                replyTo,
+                isForwarded,
+              });
             } catch {
               // Expected for history predating a key rotation/loss — summarised
               // once below rather than logged per message.
@@ -370,7 +381,7 @@ export function DashboardShell({
         nonce,
         message_id: messageId,
         timestamp,
-        is_forwarded: isForwarded,
+        is_forwarded: frameForwarded,
       } = frame;
       if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) return;
 
@@ -413,15 +424,22 @@ export function DashboardShell({
         }
 
         try {
-          const text = await decryptIncoming(conversation, ciphertext, nonce, user.user_id);
+          const plaintext = await decryptIncoming(conversation, ciphertext, nonce, user.user_id);
+          // Unwrap the envelope: pulls out the text and any metadata the sender
+          // embedded — reply context and the forwarded flag (legacy plain-text
+          // bodies decode to just the text).
+          const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
           recordMessage(chatRoomId, {
             id: messageId,
             senderId,
             text,
             timestamp: timestamp ?? Date.now(),
-            // Render the "Forwarded" tag on the recipient's bubble too when the
-            // sender flagged it; absent on normal messages, so it stays falsy.
-            isForwarded,
+            // Render the "Forwarded" tag on the recipient's bubble too. The flag
+            // travels inside the ciphertext (the backend drops frame-level extras
+            // as a blind router); the frame flag is only a fallback if a future
+            // backend starts relaying it.
+            isForwarded: isForwarded ?? frameForwarded,
+            replyTo,
           });
         } catch {
           // Undecryptable even after a key-refresh retry — genuinely
@@ -482,7 +500,7 @@ export function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on reconnect only; re-running for every unrelated `conversations`/`syncHistory` identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeerId]);
 
-  async function handleSend(text: string) {
+  async function handleSend(text: string, replyTo?: ReplyPreview) {
     if (!user) return;
     const conversation = conversations.find((c) => c.peerId === activePeerId);
     if (!conversation) return;
@@ -493,7 +511,12 @@ export function DashboardShell({
       const sharedKey = await getSharedKey(conversation);
       if (!sharedKey) throw new Error('Encryption keys are not ready yet.');
 
-      const { ciphertext, nonce } = await encryptText(sharedKey, text);
+      // Wrap the text (and reply metadata, when replying) in the envelope
+      // before encrypting, so the whole reply context is end-to-end encrypted.
+      const { ciphertext, nonce } = await encryptText(
+        sharedKey,
+        encodeMessageBody(text, { replyTo }),
+      );
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
 
@@ -516,6 +539,7 @@ export function DashboardShell({
         text,
         timestamp,
         status: 'sent',
+        replyTo,
       });
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Could not send message.');
@@ -582,7 +606,12 @@ export function DashboardShell({
       const sharedKey = await getSharedKey(target);
       if (!sharedKey) throw new Error('Encryption keys are not ready yet.');
 
-      const { ciphertext, nonce } = await encryptText(sharedKey, message.text);
+      // Forwarded flag rides inside the encrypted envelope (not just the WS
+      // frame) so it survives the backend's blind relay and reaches the peer.
+      const { ciphertext, nonce } = await encryptText(
+        sharedKey,
+        encodeMessageBody(message.text, { isForwarded: true }),
+      );
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
 
