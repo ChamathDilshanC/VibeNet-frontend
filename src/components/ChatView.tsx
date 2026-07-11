@@ -61,6 +61,14 @@ const STATUS_LABEL: Record<MessageStatus, string> = {
   read: 'Read',
 };
 
+// While a peer keeps typing we re-emit "typing" on this cadence (a heartbeat) so
+// the receiver's inactivity timeout keeps refreshing and the indicator never
+// disappears mid-typing. Must be shorter than the receiver's clear timeout (see
+// DashboardShell TYPING_TIMEOUT_MS).
+const TYPING_HEARTBEAT_MS = 2000;
+// After this much keystroke silence, tell the peer we've stopped typing.
+const TYPING_IDLE_MS = 3000;
+
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {
     hour: '2-digit',
@@ -451,6 +459,9 @@ export function ChatView({
   // sends "false" after a short pause. onTyping is read through a ref so these
   // handlers don't need to be recreated when its identity changes.
   const typingActiveRef = useRef(false);
+  // Timestamp (ms) of the last "typing:true" we emitted, so we re-send only on the
+  // heartbeat cadence rather than on every keystroke.
+  const lastTypingSentRef = useRef(0);
   const typingIdleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const onTypingRef = useRef(onTyping);
   useEffect(() => {
@@ -464,18 +475,26 @@ export function ChatView({
     }
     if (typingActiveRef.current) {
       typingActiveRef.current = false;
+      lastTypingSentRef.current = 0;
       onTypingRef.current(false);
     }
   }
 
   function notifyTyping() {
-    if (!typingActiveRef.current) {
+    const now = Date.now();
+    // (Re)send "typing:true" on the first keystroke and then at most once per
+    // heartbeat while typing continues, so the receiver's inactivity timeout is
+    // continually refreshed and the indicator stays up for as long as the user
+    // keeps typing — not just for one timeout window.
+    if (now - lastTypingSentRef.current >= TYPING_HEARTBEAT_MS) {
+      lastTypingSentRef.current = now;
       typingActiveRef.current = true;
       onTypingRef.current(true);
     }
     if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
-    // Fall back to "stopped" after a pause; the receiver also self-clears at 3s.
-    typingIdleTimerRef.current = setTimeout(stopTyping, 2500);
+    // Once keystrokes stop for this long, emit "stopped" (the receiver also
+    // self-clears via its own timeout as a safety net).
+    typingIdleTimerRef.current = setTimeout(stopTyping, TYPING_IDLE_MS);
   }
 
   // Switching conversations (or unmounting): forget our local typing state
@@ -485,6 +504,7 @@ export function ChatView({
     return () => {
       if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
       typingActiveRef.current = false;
+      lastTypingSentRef.current = 0;
     };
   }, [conversation.peerId]);
 

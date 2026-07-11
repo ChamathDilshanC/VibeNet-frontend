@@ -93,9 +93,10 @@ interface InboundFrame {
 const PRESENCE_POLL_MS = 20_000;
 
 // Clear a peer's typing indicator if no further typing frame arrives within this
-// window — matches the "stop after 3s of silence" requirement and self-heals a
-// missed "stopped" frame.
-const TYPING_TIMEOUT_MS = 3_000;
+// window. The sender re-emits "typing" every ~2s while composing (see ChatView
+// TYPING_HEARTBEAT_MS), so this must be comfortably larger than that heartbeat to
+// avoid clearing mid-typing; it also self-heals a missed "stopped" frame.
+const TYPING_TIMEOUT_MS = 5_000;
 
 // Stable empty set for the "nobody known online" case (disconnected), so we
 // don't mint a new Set identity on every render.
