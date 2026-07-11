@@ -11,6 +11,10 @@ const STORAGE_PREFIX = 'vibenet:conversations:';
 export interface Conversation {
   peerId: string;
   peerUsername: string;
+  /** Peer's "real name" — what the UI shows in place of the username. Cached from
+   *  search / the key endpoint and kept fresh by live user_update events. May be
+   *  absent for older cached conversations; peerName() falls back to the username. */
+  peerDisplayName?: string;
   /** base64 SPKI — cached from GET /api/users/{id}/key so we don't re-fetch on every reload. */
   peerPublicKey: string;
   /** Peer's Google avatar URL, if any — cached from search / the key endpoint so the
@@ -26,6 +30,15 @@ export interface Conversation {
 // since there's no backend "create room" call to hand one out.
 export function chatRoomIdFor(userIdA: string, userIdB: string): string {
   return [userIdA, userIdB].sort().join(':');
+}
+
+// peerName is the single source of truth for what to call a peer in the UI: the
+// real name when set, otherwise the username. Everything that renders a peer's
+// name (DM list, chat header, bubbles) routes through this so the fallback is
+// consistent and a blank display name never shows.
+export function peerName(conversation: Conversation): string {
+  const display = conversation.peerDisplayName?.trim();
+  return display ? display : conversation.peerUsername;
 }
 
 function storageKey(ownerId: string): string {
@@ -49,6 +62,29 @@ export function upsertConversation(ownerId: string, conversation: Conversation):
   if (typeof window === 'undefined') return [];
   const existing = listConversations(ownerId).filter((c) => c.peerId !== conversation.peerId);
   const next = [conversation, ...existing];
+  window.localStorage.setItem(storageKey(ownerId), JSON.stringify(next));
+  return next;
+}
+
+// applyPeerUpdate patches a peer's cached display name and/or avatar in place
+// (list order preserved, unlike upsertConversation) and persists the result —
+// used when a live user_update event reports a peer renamed themselves mid-chat.
+// Only defined patch fields overwrite; returns the updated list.
+export function applyPeerUpdate(
+  ownerId: string,
+  peerId: string,
+  patch: { peerDisplayName?: string; peerAvatarUrl?: string },
+): Conversation[] {
+  if (typeof window === 'undefined') return [];
+  const next = listConversations(ownerId).map((c) =>
+    c.peerId === peerId
+      ? {
+          ...c,
+          peerDisplayName: patch.peerDisplayName ?? c.peerDisplayName,
+          peerAvatarUrl: patch.peerAvatarUrl ?? c.peerAvatarUrl,
+        }
+      : c,
+  );
   window.localStorage.setItem(storageKey(ownerId), JSON.stringify(next));
   return next;
 }

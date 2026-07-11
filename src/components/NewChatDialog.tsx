@@ -29,6 +29,7 @@ import { apiClient } from '@/lib/apiClient';
 interface SearchResult {
   user_id: string;
   username: string;
+  display_name?: string;
   require_pin: boolean;
   avatar_url?: string;
 }
@@ -36,8 +37,15 @@ interface SearchResult {
 export interface ResolvedPeer {
   userId: string;
   username: string;
+  displayName?: string;
   publicKey: string;
   avatarUrl?: string;
+}
+
+// The name to show for a search hit: the real name when present, else the handle.
+function resultName(user: SearchResult): string {
+  const display = user.display_name?.trim();
+  return display ? display : user.username;
 }
 
 const MIN_QUERY_LENGTH = 2;
@@ -103,15 +111,17 @@ export function NewChatDialog({
         : `/api/users/${user.user_id}/key`;
       const data = await apiClient.get<{
         user_id: string;
+        display_name?: string;
         public_key: string;
         avatar_url?: string;
       }>(path);
       onStart({
         userId: user.user_id,
         username: user.username,
+        // The key response is authoritative for name + avatar; fall back to the
+        // search hit, then the username, so a name is always present.
+        displayName: data.display_name ?? user.display_name ?? user.username,
         publicKey: data.public_key,
-        // The key response is authoritative for the avatar; fall back to the
-        // one from the search hit if it wasn't included.
         avatarUrl: data.avatar_url ?? user.avatar_url,
       });
       onOpenChange(false);
@@ -153,9 +163,9 @@ export function NewChatDialog({
               {selected ? (
                 <VStack gap={3}>
                   <HStack gap={2} vAlign="center">
-                    <Avatar src={selected.avatar_url} name={selected.username} size="small" />
+                    <Avatar src={selected.avatar_url} name={resultName(selected)} size="small" />
                     <Text type="body" weight="semibold">
-                      {selected.username}
+                      {resultName(selected)}
                     </Text>
                   </HStack>
                   <Text type="supporting" color="secondary">
@@ -203,9 +213,18 @@ export function NewChatDialog({
                       {results.map((user) => (
                         <ListItem
                           key={user.user_id}
-                          label={user.username}
-                          description={user.require_pin ? 'PIN required' : undefined}
-                          startContent={<Avatar src={user.avatar_url} name={user.username} size="small" />}
+                          label={resultName(user)}
+                          description={
+                            // Surface the handle when it differs from the shown
+                            // name, plus the PIN hint when required.
+                            [
+                              resultName(user) !== user.username ? `@${user.username}` : null,
+                              user.require_pin ? 'PIN required' : null,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ') || undefined
+                          }
+                          startContent={<Avatar src={user.avatar_url} name={resultName(user)} size="small" />}
                           endContent={
                             user.require_pin ? (
                               <Icon icon={ShieldCheckIcon} size="sm" />

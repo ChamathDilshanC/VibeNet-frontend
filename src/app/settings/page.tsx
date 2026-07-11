@@ -29,6 +29,9 @@ import { useAuth } from '@/hooks/useAuth';
 const USERNAME_PATTERN = /^[A-Za-z0-9._]+$/;
 const USERNAME_MIN = 3;
 const USERNAME_MAX = 48;
+// Mirrors validateDisplayName in the backend — a free-form human name, only
+// bounded by the column width. Empty is allowed and defaults to the username.
+const DISPLAY_NAME_MAX = 64;
 
 function usernameError(username: string): string | null {
   if (username.length < USERNAME_MIN) return `At least ${USERNAME_MIN} characters.`;
@@ -39,6 +42,11 @@ function usernameError(username: string): string | null {
   return null;
 }
 
+function displayNameError(displayName: string): string | null {
+  if (displayName.length > DISPLAY_NAME_MAX) return `At most ${DISPLAY_NAME_MAX} characters.`;
+  return null;
+}
+
 function ProfilePanel({
   user,
   onUpdated,
@@ -46,14 +54,24 @@ function ProfilePanel({
   user: AuthUser;
   onUpdated: (user: AuthUser) => void;
 }) {
+  // Existing accounts created before display_name existed may arrive without one;
+  // seed the field from the username so it's never blank in the editor.
+  const currentDisplayName = user.display_name || user.username;
   const [username, setUsername] = useState(user.username);
+  const [displayName, setDisplayName] = useState(currentDisplayName);
   const [saving, setSaving] = useState(false);
 
-  const trimmed = username.trim();
+  const trimmedUsername = username.trim();
+  const trimmedDisplayName = displayName.trim();
   const isGoogleAccount = Boolean(user.avatar_url);
-  // Only nag once they've actually typed something invalid.
-  const error = trimmed === user.username ? null : usernameError(trimmed);
-  const canSave = trimmed !== user.username && error === null;
+
+  // Only nag once they've actually changed a field to something invalid.
+  const usernameErr = trimmedUsername === user.username ? null : usernameError(trimmedUsername);
+  const displayNameErr = displayNameError(trimmedDisplayName);
+  const usernameChanged = trimmedUsername !== user.username;
+  const displayNameChanged = trimmedDisplayName !== currentDisplayName;
+  const canSave =
+    (usernameChanged || displayNameChanged) && usernameErr === null && displayNameErr === null;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -61,7 +79,8 @@ function ProfilePanel({
 
     setSaving(true);
     try {
-      const updated = await updateProfile(trimmed);
+      // A blank real name defaults to the username (matches the backend).
+      const updated = await updateProfile(trimmedUsername, trimmedDisplayName || trimmedUsername);
       onUpdated(updated);
       gooeyToast.success('Profile updated.');
     } catch (err) {
@@ -80,7 +99,12 @@ function ProfilePanel({
           Profile picture
         </Heading>
         <div className="flex items-center gap-4">
-          <Avatar src={user.avatar_url} name={user.username} size="large" alt={user.username} />
+          <Avatar
+            src={user.avatar_url}
+            name={currentDisplayName}
+            size="large"
+            alt={currentDisplayName}
+          />
           <Text type="supporting" color="secondary">
             {isGoogleAccount
               ? 'Synced from your Google account. Change it in Google and sign in again to update it here.'
@@ -92,18 +116,32 @@ function ProfilePanel({
       <form className="flex flex-col gap-5" onSubmit={handleSubmit} noValidate>
         <VStack gap={3}>
           <Heading level={2}>
-            Display name
+            Name &amp; username
           </Heading>
           <TextInput
             type="text"
+            label="Real name"
+            description="Your display name — this is what people see across VibeNet."
+            value={displayName}
+            onChange={setDisplayName}
+            htmlName="display_name"
+            size="lg"
+            status={
+              displayNameErr ? ({ type: 'error', message: displayNameErr } as const) : undefined
+            }
+          />
+          <TextInput
+            type="text"
             label="Username"
-            description="This is how you appear to other people and how they find you in search."
+            description="Your unique handle — how people find you in search."
             value={username}
             onChange={setUsername}
             htmlName="username"
             size="lg"
             isRequired
-            status={error ? ({ type: 'error', message: error } as const) : undefined}
+            status={
+              usernameErr ? ({ type: 'error', message: usernameErr } as const) : undefined
+            }
           />
         </VStack>
 
@@ -157,11 +195,15 @@ export default function SettingsPage() {
               <Tab value="profile" label="Profile" icon={<UserCircleIcon />} />
             </TabList>
 
-            {/* Keyed on the username so the form reseeds after a save, or after
-                useAuth's background refresh reports a rename from elsewhere,
+            {/* Keyed on username + real name so the form reseeds after a save, or
+                after useAuth's background refresh reports a change from elsewhere,
                 instead of holding a stale value in local state. */}
             {user && tab === 'profile' && (
-              <ProfilePanel key={user.username} user={user} onUpdated={updateUser} />
+              <ProfilePanel
+                key={`${user.username}:${user.display_name}`}
+                user={user}
+                onUpdated={updateUser}
+              />
             )}
           </VStack>
         </LayoutContent>

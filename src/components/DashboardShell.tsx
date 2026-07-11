@@ -18,6 +18,7 @@ import { gooeyToast } from 'goey-toast';
 import type { AuthUser } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
 import {
+  applyPeerUpdate,
   chatRoomIdFor,
   listConversations,
   upsertConversation,
@@ -50,7 +51,14 @@ import { Sidebar } from './Sidebar';
 // message fields are present only on chat frames, `delivered` only on acks,
 // and `chat_room_id` identifies the room for acks and read receipts alike.
 interface InboundFrame {
-  type?: 'message' | 'ack' | 'read' | 'presence' | 'pin_message' | 'delete_message';
+  type?:
+    | 'message'
+    | 'ack'
+    | 'read'
+    | 'presence'
+    | 'pin_message'
+    | 'delete_message'
+    | 'user_update';
   message_id?: string;
   sender_id?: string;
   chat_room_id?: string;
@@ -61,6 +69,11 @@ interface InboundFrame {
   reader_id?: string;
   online?: string[];
   is_forwarded?: boolean;
+  // user_update frame: a peer edited their profile (see UpdateProfile on the
+  // backend). Carries public profile fields only, never ciphertext.
+  user_id?: string;
+  display_name?: string;
+  avatar_url?: string;
 }
 
 // How often to re-query which peers are online (ms). Presence has no push
@@ -133,19 +146,24 @@ export function DashboardShell({
         const resolved = await apiClient.get<{
           user_id: string;
           public_key: string;
+          display_name?: string;
           avatar_url?: string;
         }>(`/api/users/${conversation.peerId}/key`);
         const keyChanged = resolved.public_key !== conversation.peerPublicKey;
-        // Also backfill the avatar: conversations started before avatars existed
-        // (or from an incoming message) have none cached, so pick it up here even
-        // when the key itself hasn't rotated.
+        // Also backfill the avatar and real name: conversations started before
+        // these existed (or from an incoming message) have none cached, so pick
+        // them up here even when the key itself hasn't rotated.
         const avatarChanged = (resolved.avatar_url ?? undefined) !== conversation.peerAvatarUrl;
-        if (!keyChanged && !avatarChanged) return conversation;
+        const resolvedName = resolved.display_name?.trim() || undefined;
+        const nameChanged =
+          resolvedName !== undefined && resolvedName !== conversation.peerDisplayName;
+        if (!keyChanged && !avatarChanged && !nameChanged) return conversation;
         if (keyChanged) sharedKeyCache.current.delete(conversation.peerId);
         const refreshed: Conversation = {
           ...conversation,
           peerPublicKey: resolved.public_key,
           peerAvatarUrl: resolved.avatar_url,
+          peerDisplayName: resolvedName ?? conversation.peerDisplayName,
         };
         setConversations(upsertConversation(currentUserId, refreshed));
         return refreshed;
@@ -374,6 +392,20 @@ export function DashboardShell({
         return;
       }
 
+      // Profile update broadcast: a peer changed their real name / avatar. Patch
+      // the cached conversation so the DM list, chat header, and bubbles update
+      // live — no reload needed. Only touches peers we actually have a chat with.
+      if (frame.type === 'user_update') {
+        if (frame.user_id && conversations.some((c) => c.peerId === frame.user_id)) {
+          const updated = applyPeerUpdate(user.user_id, frame.user_id, {
+            peerDisplayName: frame.display_name,
+            peerAvatarUrl: frame.avatar_url,
+          });
+          setConversations(updated);
+        }
+        return;
+      }
+
       const {
         sender_id: senderId,
         chat_room_id: chatRoomId,
@@ -404,11 +436,15 @@ export function DashboardShell({
             const resolved = await apiClient.get<{
               user_id: string;
               public_key: string;
+              display_name?: string;
               avatar_url?: string;
             }>(`/api/users/${senderId}/key`);
             conversation = {
               peerId: senderId,
               peerUsername: `user_${senderId.slice(0, 8)}`,
+              // The key endpoint carries the peer's real name — use it so an
+              // unknown first-time sender shows a proper name, not just a stub id.
+              peerDisplayName: resolved.display_name?.trim() || undefined,
               peerPublicKey: resolved.public_key,
               peerAvatarUrl: resolved.avatar_url,
               chatRoomId,
@@ -466,6 +502,7 @@ export function DashboardShell({
     const conversation: Conversation = {
       peerId: peer.userId,
       peerUsername: peer.username,
+      peerDisplayName: peer.displayName,
       peerPublicKey: peer.publicKey,
       peerAvatarUrl: peer.avatarUrl,
       chatRoomId: chatRoomIdFor(user.user_id, peer.userId),

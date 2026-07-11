@@ -13,6 +13,9 @@ export const API_BASE_URL = (
 export interface AuthUser {
   user_id: string;
   username: string;
+  /** Human "real name" shown throughout the client in place of the username.
+   *  The backend always returns it, falling back to the username when unset. */
+  display_name: string;
   email?: string;
   public_key?: string;
   /** Google account photo, re-synced by the backend on each Google sign-in.

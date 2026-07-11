@@ -13,8 +13,13 @@ export function fetchMe(): Promise<AuthUser> {
   return apiClient.get<AuthUser>('/api/user/me');
 }
 
-// PUT /api/user/profile — renames the account. Rejects with an ApiError carrying
-// status 409 when another account already holds the username.
-export function updateProfile(username: string): Promise<AuthUser> {
-  return apiClient.put<AuthUser>('/api/user/profile', { username });
+// PUT /api/user/profile — updates the account's username and display name (real
+// name). Rejects with an ApiError carrying status 409 when another account
+// already holds the username. A blank display name is defaulted to the username
+// server-side.
+export function updateProfile(username: string, displayName: string): Promise<AuthUser> {
+  return apiClient.put<AuthUser>('/api/user/profile', {
+    username,
+    display_name: displayName,
+  });
 }

@@ -31,7 +31,13 @@ function decodeTokenUser(token: string): AuthUser {
     username?: string;
   };
   if (!claims.user_id || !claims.username) throw new Error('missing claims');
-  return { user_id: claims.user_id, username: claims.username };
+  // The JWT carries no display_name; seed it from the username as a placeholder.
+  // useAuth's GET /api/user/me refresh replaces this with the real name moments later.
+  return {
+    user_id: claims.user_id,
+    username: claims.username,
+    display_name: claims.username,
+  };
 }
 
 // Shared loading UI, also used as the Suspense fallback so the transition is seamless.

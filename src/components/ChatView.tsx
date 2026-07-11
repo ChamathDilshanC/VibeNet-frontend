@@ -37,7 +37,7 @@ import {
 } from '@heroicons/react/24/solid';
 import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
-import type { Conversation } from '@/lib/conversations';
+import { peerName, type Conversation } from '@/lib/conversations';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { MessageContextMenu } from './MessageContextMenu';
 
@@ -341,9 +341,9 @@ function MessageRow({
               className="mb-2.5 shrink-0">
               <Avatar
                 src={conversation.peerAvatarUrl}
-                name={conversation.peerUsername}
+                name={peerName(conversation)}
                 size={16}
-                alt={`Seen by ${conversation.peerUsername}`}
+                alt={`Seen by ${peerName(conversation)}`}
                 className="ring-1 ring-white"
               />
             </motion.div>
@@ -352,12 +352,12 @@ function MessageRow({
       ) : (
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
-          <Avatar src={conversation.peerAvatarUrl} name={conversation.peerUsername} size="small" />
+          <Avatar src={conversation.peerAvatarUrl} name={peerName(conversation)} size="small" />
           <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
-              {conversation.peerUsername}
+              {peerName(conversation)}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
@@ -435,7 +435,7 @@ export function ChatView({
     const replyTo: ReplyPreview | undefined = activeReply
       ? {
           messageId: activeReply.id,
-          senderName: activeReply.senderId === myUserId ? 'You' : conversation.peerUsername,
+          senderName: activeReply.senderId === myUserId ? 'You' : peerName(conversation),
           textPreview: previewText(activeReply.text),
         }
       : undefined;
@@ -555,10 +555,10 @@ export function ChatView({
         </header>
       ) : (
         <header className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white/70 px-4 py-3 backdrop-blur-sm sm:px-6">
-          <Avatar src={conversation.peerAvatarUrl} name={conversation.peerUsername} size="small" />
+          <Avatar src={conversation.peerAvatarUrl} name={peerName(conversation)} size="small" />
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-semibold text-gray-900">
-              {conversation.peerUsername}
+              {peerName(conversation)}
             </span>
             <span className="text-xs text-gray-500">{CONNECTION_LABEL[connectionStatus]}</span>
           </div>
@@ -653,7 +653,7 @@ export function ChatView({
                 <span className="w-1 shrink-0 rounded-full bg-[var(--vibe-blue)]" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-[var(--vibe-blue)]">
-                    Replying to {replyIsMine ? 'yourself' : conversation.peerUsername}
+                    Replying to {replyIsMine ? 'yourself' : peerName(conversation)}
                   </p>
                   <p className="truncate text-xs text-gray-500">{previewText(activeReply.text)}</p>
                 </div>
@@ -685,7 +685,7 @@ export function ChatView({
                 type="text"
                 aria-label="Message"
                 placeholder={
-                  activeReply ? 'Type your reply…' : `Message ${conversation.peerUsername}`
+                  activeReply ? 'Type your reply…' : `Message ${peerName(conversation)}`
                 }
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}

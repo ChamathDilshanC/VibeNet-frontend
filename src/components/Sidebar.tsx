@@ -27,7 +27,7 @@ import {
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import type { AuthUser } from '@/lib/api';
-import type { Conversation } from '@/lib/conversations';
+import { peerName, type Conversation } from '@/lib/conversations';
 
 export function Sidebar({
   user,
@@ -70,9 +70,13 @@ export function Sidebar({
           <SideNavItem label="Chat PIN" icon={ShieldCheckIcon} href="#" />
           <SideNavItem label="Settings" icon={Cog6ToothIcon} href="/settings" />
           <SideNavItem
-            label={user?.username ?? 'Account'}
+            label={user?.display_name || user?.username || 'Account'}
             icon={
-              <Avatar src={user?.avatar_url} name={user?.username} size="tiny" />
+              <Avatar
+                src={user?.avatar_url}
+                name={user?.display_name || user?.username}
+                size="tiny"
+              />
             }
             href="/settings"
           />
@@ -101,14 +105,15 @@ export function Sidebar({
         ) : (
           conversations.map((conversation) => {
             const isOnline = onlinePeers.has(conversation.peerId);
+            const name = peerName(conversation);
             return (
               <SideNavItem
                 key={conversation.peerId}
-                label={conversation.peerUsername}
+                label={name}
                 icon={
                   <Avatar
                     src={conversation.peerAvatarUrl}
-                    name={conversation.peerUsername}
+                    name={name}
                     size="tiny"
                   />
                 }
