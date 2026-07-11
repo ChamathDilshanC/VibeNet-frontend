@@ -1,14 +1,15 @@
-// VibeNet — chat-start PIN verification dialog.
+// VibeNet — chat-unlock PIN verification dialog.
 //
-// Shown before a PIN-protected conversation opens: an ultra-modern centered
-// overlay with the peer's avatar and six segmented PIN boxes. The parent verifies
-// the entered code (by fetching the peer's key with `?pin=`); on failure it feeds
-// back an `error`, which triggers a shake + clears the boxes. On success the parent
-// closes the dialog and the chat opens.
+// The chat PIN is single-sided: before a chat room opens, the CURRENT user enters
+// THEIR OWN 6-digit PIN to unlock the chat interface. This ultra-modern centered
+// overlay shows the current user's avatar and six segmented boxes; the parent
+// verifies the code server-side (POST /api/user/verify-pin) and, on failure, feeds
+// back an `error` which triggers a shake + clears the boxes. On success the parent
+// closes the dialog and opens the chat.
 
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { AnimatePresence, motion, useAnimationControls } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Button } from '@astryxdesign/core/Button';
@@ -20,8 +21,9 @@ const PIN_LENGTH = 6;
 
 export function PinPromptDialog({
   isOpen,
-  peerName,
-  peerAvatarUrl,
+  avatarName,
+  avatarUrl,
+  subtitle,
   isVerifying,
   error,
   errorNonce = 0,
@@ -29,8 +31,11 @@ export function PinPromptDialog({
   onCancel,
 }: {
   isOpen: boolean;
-  peerName: string;
-  peerAvatarUrl?: string;
+  /** The current user's name — the avatar/initials shown in the dialog. */
+  avatarName: string;
+  avatarUrl?: string;
+  /** Context line under the title, e.g. which chat is being opened. */
+  subtitle?: ReactNode;
   isVerifying: boolean;
   error?: string | null;
   /** Bump this on each failed attempt to re-trigger the shake, even if `error` text is unchanged. */
@@ -41,10 +46,10 @@ export function PinPromptDialog({
   const [pin, setPin] = useState('');
   const controls = useAnimationControls();
 
-  // Reset the field whenever the dialog (re)opens for a new peer.
+  // Reset the field whenever the dialog (re)opens.
   useEffect(() => {
     if (isOpen) setPin('');
-  }, [isOpen, peerName]);
+  }, [isOpen]);
 
   // On a verification failure, shake the panel and clear the boxes so the person
   // can retype. Keyed on errorNonce so repeated identical errors still re-trigger.
@@ -82,7 +87,7 @@ export function PinPromptDialog({
           <motion.div
             role="dialog"
             aria-modal="true"
-            aria-label={`Enter PIN to chat with ${peerName}`}
+            aria-label="Enter your chat PIN to unlock chats"
             className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-7 shadow-2xl shadow-slate-900/20 backdrop-blur-xl"
             initial={{ opacity: 0, scale: 0.92, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -96,7 +101,7 @@ export function PinPromptDialog({
                   style={{ background: 'var(--vibe-gradient)' }}
                 />
                 <span className="relative block rounded-full ring-4 ring-white/80">
-                  <Avatar src={resolveAvatarUrl(peerAvatarUrl)} name={peerName} size={72} alt={peerName} />
+                  <Avatar src={resolveAvatarUrl(avatarUrl)} name={avatarName} size={72} alt={avatarName} />
                 </span>
                 <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-[color:var(--vibe-blue)] text-white ring-2 ring-white">
                   <LockClosedIcon className="h-4 w-4" />
@@ -104,10 +109,9 @@ export function PinPromptDialog({
               </div>
 
               <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-slate-900">Enter chat PIN</h2>
+                <h2 className="text-lg font-semibold text-slate-900">Enter your chat PIN</h2>
                 <p className="text-sm text-slate-500">
-                  <span className="font-medium text-slate-700">{peerName}</span> protects new chats
-                  with a 6-digit PIN. Ask them for their current code.
+                  {subtitle ?? 'Enter your 6-digit chat PIN to unlock your conversations.'}
                 </p>
               </div>
 

@@ -41,6 +41,13 @@ export function fetchMyPin(): Promise<PinStatus> {
   return apiClient.get<PinStatus>('/api/user/my-pin');
 }
 
+// POST /api/user/verify-pin — validates the PIN the current user entered to unlock
+// their own chat interface, against their own active PIN (static or rotating).
+// Resolves on success; rejects with an ApiError (status 403) on a wrong PIN.
+export function verifyPin(pin: string): Promise<{ valid: boolean }> {
+  return apiClient.post<{ valid: boolean }>('/api/user/verify-pin', { pin });
+}
+
 // PUT /api/user/settings/pin — persists the chat-PIN configuration. `customPin` is
 // only sent for the static type; omit it to keep a previously-set custom PIN.
 export function updatePinSettings(input: {

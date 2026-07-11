@@ -15,8 +15,9 @@ import { Layout, LayoutContent } from '@astryxdesign/core/Layout';
 import { VStack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { gooeyToast } from 'goey-toast';
-import type { AuthUser } from '@/lib/api';
+import { ApiError, type AuthUser } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
+import { verifyPin } from '@/lib/user';
 import {
   applyPeerUpdate,
   chatRoomIdFor,
@@ -44,6 +45,7 @@ import { ChatView } from './ChatView';
 import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
+import { PinPromptDialog } from './PinPromptDialog';
 import { Sidebar } from './Sidebar';
 
 // A frame off the WebSocket. `type` discriminates a chat message from the
@@ -105,6 +107,14 @@ export function DashboardShell({
     user ? listConversations(user.user_id) : [],
   );
   const [activePeerId, setActivePeerId] = useState<string | null>(null);
+  // Single-sided chat-PIN gate: when the current user has chat_pin_enabled, opening
+  // any chat room prompts them for THEIR OWN PIN. Verifying once unlocks the chat
+  // interface for the session; pinPendingPeerId holds the room to open on success.
+  const [chatUnlocked, setChatUnlocked] = useState(false);
+  const [pinPendingPeerId, setPinPendingPeerId] = useState<string | null>(null);
+  const [pinVerifying, setPinVerifying] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
+  const [pinErrorNonce, setPinErrorNonce] = useState(0);
   const [isNewChatOpen, setIsNewChatOpen] = useState(false);
   // Bumped each time the dialog opens so NewChatDialog remounts with fresh
   // internal state instead of needing a reset-on-close effect.
@@ -497,6 +507,47 @@ export function DashboardShell({
 
   const { status: connectionStatus, send } = useChatSocket(handleIncoming);
 
+  // requestOpenPeer is the single entry point for opening a chat room (sidebar
+  // selection, empty-state list, or a freshly-started chat). It enforces the
+  // single-sided PIN gate: if the current user requires a PIN and hasn't unlocked
+  // the interface yet this session, it defers the open until they verify their PIN.
+  const requestOpenPeer = useCallback(
+    (peerId: string) => {
+      if (!peerId) return;
+      if (user?.chat_pin_enabled === true && !chatUnlocked) {
+        setPinError(null);
+        setPinPendingPeerId(peerId);
+        return;
+      }
+      setActivePeerId(peerId);
+    },
+    [user?.chat_pin_enabled, chatUnlocked],
+  );
+
+  async function submitChatPin(code: string) {
+    setPinVerifying(true);
+    try {
+      await verifyPin(code);
+      setChatUnlocked(true);
+      const target = pinPendingPeerId;
+      setPinPendingPeerId(null);
+      setPinError(null);
+      if (target) setActivePeerId(target);
+    } catch (err) {
+      // Wrong PIN (403) or any other failure: keep the dialog open and shake.
+      setPinError(
+        err instanceof ApiError && err.status === 403
+          ? 'Incorrect PIN. Try again.'
+          : err instanceof Error
+            ? err.message
+            : 'Could not verify your PIN.',
+      );
+      setPinErrorNonce((n) => n + 1);
+    } finally {
+      setPinVerifying(false);
+    }
+  }
+
   function handleStartConversation(peer: ResolvedPeer) {
     if (!user) return;
     const conversation: Conversation = {
@@ -509,14 +560,14 @@ export function DashboardShell({
       createdAt: Date.now(),
     };
     setConversations(upsertConversation(user.user_id, conversation));
-    setActivePeerId(peer.userId);
     setMessagesByRoom((prev) =>
       prev[conversation.chatRoomId]
         ? prev
         : { ...prev, [conversation.chatRoomId]: getMessages(conversation.chatRoomId) },
     );
-    // History sync runs from the effect below, keyed off activePeerId — not
-    // called directly here too, so opening a conversation only fetches once.
+    // Gate the actual room open behind the current user's PIN. History sync runs
+    // from the effect keyed off activePeerId once the room is opened.
+    requestOpenPeer(peer.userId);
   }
 
   // Fetches history whenever the active conversation changes (new chat
@@ -732,7 +783,7 @@ export function DashboardShell({
           conversations={conversations}
           activePeerId={activePeerId}
           onlinePeers={visibleOnlinePeers}
-          onSelectConversation={setActivePeerId}
+          onSelectConversation={requestOpenPeer}
           onNewChat={() => {
             setNewChatSession((n) => n + 1);
             setIsNewChatOpen(true);
@@ -772,7 +823,7 @@ export function DashboardShell({
                 <EmptyState
                   conversations={conversations}
                   onlinePeers={visibleOnlinePeers}
-                  onSelect={setActivePeerId}
+                  onSelect={requestOpenPeer}
                 />
               </VStack>
             </LayoutContent>
@@ -787,6 +838,31 @@ export function DashboardShell({
           onOpenChange={setIsNewChatOpen}
           currentUserId={user.user_id}
           onStart={handleStartConversation}
+        />
+      )}
+
+      {/* Single-sided PIN gate: the current user enters their own PIN to unlock the
+          chat interface before a room opens. */}
+      {user && (
+        <PinPromptDialog
+          isOpen={pinPendingPeerId !== null}
+          avatarName={user.display_name || user.username}
+          avatarUrl={user.avatar_url}
+          subtitle={(() => {
+            const peer = conversations.find((c) => c.peerId === pinPendingPeerId);
+            const name = peer ? peer.peerDisplayName || peer.peerUsername : null;
+            return name
+              ? `Enter your 6-digit chat PIN to open your conversation with ${name}.`
+              : 'Enter your 6-digit chat PIN to unlock your conversations.';
+          })()}
+          isVerifying={pinVerifying}
+          error={pinError}
+          errorNonce={pinErrorNonce}
+          onSubmit={(code) => void submitChatPin(code)}
+          onCancel={() => {
+            setPinPendingPeerId(null);
+            setPinError(null);
+          }}
         />
       )}
 

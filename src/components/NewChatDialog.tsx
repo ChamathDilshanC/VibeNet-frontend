@@ -2,10 +2,11 @@
 //
 // Search is the only discovery mechanism the backend exposes (GET
 // /api/users/search?username=), so this dialog doubles as the target for both
-// the sidebar's "New chat" and "Find people" actions. Selecting a result
-// fetches their E2EE public key (GET /api/users/{id}/key) — PIN-gated
-// accounts get an inline PIN step, matching the backend's `?pin=` param —
-// and hands the resolved peer back to the caller to open as a conversation.
+// the sidebar's "New chat" and "Find people" actions. Selecting a result fetches
+// their E2EE public key (GET /api/users/{id}/key) and hands the resolved peer back
+// to the caller to open as a conversation. The chat PIN is single-sided — the
+// current user's own unlock happens in DashboardShell when the room opens, so this
+// dialog no longer deals with PINs.
 
 'use client';
 
@@ -18,20 +19,15 @@ import { List, ListItem } from '@astryxdesign/core/List';
 import { VStack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
-import {
-  MagnifyingGlassIcon,
-  ShieldCheckIcon,
-} from '@heroicons/react/24/outline';
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline';
 import { gooeyToast } from 'goey-toast';
-import { ApiError, resolveAvatarUrl } from '@/lib/api';
+import { resolveAvatarUrl } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
-import { PinPromptDialog } from './PinPromptDialog';
 
 interface SearchResult {
   user_id: string;
   username: string;
   display_name?: string;
-  chat_pin_enabled: boolean;
   avatar_url?: string;
 }
 
@@ -67,16 +63,7 @@ export function NewChatDialog({
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
-
-  // The peer awaiting PIN verification (null when the verify dialog is closed),
-  // plus its transient verify state. Selecting a PIN-protected result opens the
-  // dialog; a wrong code sets pinError, which shakes the boxes.
-  const [pinPeer, setPinPeer] = useState<SearchResult | null>(null);
   const [isStarting, setIsStarting] = useState(false);
-  const [pinError, setPinError] = useState<string | null>(null);
-  // Bumped on every failed verification so the dialog re-runs its shake even when
-  // the message text is unchanged between attempts.
-  const [pinErrorNonce, setPinErrorNonce] = useState(0);
 
   // Below this length we neither fetch nor show stale results — see the
   // `showResults` render gate below. Transient state otherwise resets for
@@ -108,19 +95,15 @@ export function NewChatDialog({
     return () => clearTimeout(timer);
   }, [trimmedQuery, currentUserId]);
 
-  async function resolvePeer(user: SearchResult, pinValue?: string) {
+  async function resolvePeer(user: SearchResult) {
     setIsStarting(true);
-    setPinError(null);
     try {
-      const path = pinValue
-        ? `/api/users/${user.user_id}/key?pin=${encodeURIComponent(pinValue)}`
-        : `/api/users/${user.user_id}/key`;
       const data = await apiClient.get<{
         user_id: string;
         display_name?: string;
         public_key: string;
         avatar_url?: string;
-      }>(path);
+      }>(`/api/users/${user.user_id}/key`);
       onStart({
         userId: user.user_id,
         username: user.username,
@@ -130,125 +113,75 @@ export function NewChatDialog({
         publicKey: data.public_key,
         avatarUrl: data.avatar_url ?? user.avatar_url,
       });
-      setPinPeer(null);
       onOpenChange(false);
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        // Wrong PIN: keep the verify dialog open and trigger a shake.
-        setPinError('Incorrect PIN. Try again.');
-        setPinErrorNonce((n) => n + 1);
-      } else {
-        const message = err instanceof Error ? err.message : 'Could not start this chat.';
-        if (pinPeer) {
-          setPinError(message);
-          setPinErrorNonce((n) => n + 1);
-        } else {
-          gooeyToast.error(message);
-        }
-      }
+      gooeyToast.error(err instanceof Error ? err.message : 'Could not start this chat.');
     } finally {
       setIsStarting(false);
     }
   }
 
   function handleSelect(user: SearchResult) {
-    setPinError(null);
-    if (user.chat_pin_enabled) {
-      setPinPeer(user);
-      return;
-    }
     void resolvePeer(user);
   }
 
   return (
-    <>
-      <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={420} purpose="form">
-        <Layout
-          height="fill"
-          header={
-            <DialogHeader
-              title="New chat"
-              subtitle="Find someone by username to start an encrypted conversation"
-              onOpenChange={onOpenChange}
-            />
-          }
-          content={
-            <LayoutContent padding={4}>
-              <VStack gap={3}>
-                <TextInput
-                  label="Search by username"
-                  isLabelHidden
-                  placeholder="Search by username"
-                  value={query}
-                  onChange={setQuery}
-                  startIcon={<Icon icon={MagnifyingGlassIcon} size="sm" />}
-                  isLoading={showResults && isSearching}
-                  hasAutoFocus
-                  hasClear
-                />
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={420} purpose="form">
+      <Layout
+        height="fill"
+        header={
+          <DialogHeader
+            title="New chat"
+            subtitle="Find someone by username to start an encrypted conversation"
+            onOpenChange={onOpenChange}
+          />
+        }
+        content={
+          <LayoutContent padding={4}>
+            <VStack gap={3}>
+              <TextInput
+                label="Search by username"
+                isLabelHidden
+                placeholder="Search by username"
+                value={query}
+                onChange={setQuery}
+                startIcon={<Icon icon={MagnifyingGlassIcon} size="sm" />}
+                isLoading={showResults && (isSearching || isStarting)}
+                hasAutoFocus
+                hasClear
+              />
 
-                {showResults && searchError && (
-                  <Text type="supporting" className="text-red-600 dark:text-red-400">
-                    {searchError}
-                  </Text>
-                )}
+              {showResults && searchError && (
+                <Text type="supporting" className="text-red-600 dark:text-red-400">
+                  {searchError}
+                </Text>
+              )}
 
-                {showResults && results.length > 0 && (
-                  <List>
-                    {results.map((user) => (
-                      <ListItem
-                        key={user.user_id}
-                        label={resultName(user)}
-                        description={
-                          // Surface the handle when it differs from the shown
-                          // name, plus the PIN hint when required.
-                          [
-                            resultName(user) !== user.username ? `@${user.username}` : null,
-                            user.chat_pin_enabled ? 'PIN required' : null,
-                          ]
-                            .filter(Boolean)
-                            .join(' · ') || undefined
-                        }
-                        startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
-                        endContent={
-                          user.chat_pin_enabled ? (
-                            <Icon icon={ShieldCheckIcon} size="sm" />
-                          ) : undefined
-                        }
-                        onClick={() => handleSelect(user)}
-                      />
-                    ))}
-                  </List>
-                )}
+              {showResults && results.length > 0 && (
+                <List>
+                  {results.map((user) => (
+                    <ListItem
+                      key={user.user_id}
+                      label={resultName(user)}
+                      description={
+                        resultName(user) !== user.username ? `@${user.username}` : undefined
+                      }
+                      startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
+                      onClick={() => handleSelect(user)}
+                    />
+                  ))}
+                </List>
+              )}
 
-                {showResults && !isSearching && !searchError && results.length === 0 && (
-                  <Text type="supporting" color="secondary">
-                    No users found.
-                  </Text>
-                )}
-              </VStack>
-            </LayoutContent>
-          }
-        />
-      </Dialog>
-
-      {/* PIN verification overlay for protected accounts. Rendered outside the
-          search Dialog so its own backdrop + shake animation own the screen. */}
-      <PinPromptDialog
-        isOpen={pinPeer !== null}
-        peerName={pinPeer ? resultName(pinPeer) : ''}
-        peerAvatarUrl={pinPeer?.avatar_url}
-        isVerifying={isStarting}
-        error={pinError}
-        errorNonce={pinErrorNonce}
-        onSubmit={(code) => {
-          if (pinPeer) void resolvePeer(pinPeer, code);
-        }}
-        onCancel={() => {
-          setPinPeer(null);
-          setPinError(null);
-        }}
+              {showResults && !isSearching && !searchError && results.length === 0 && (
+                <Text type="supporting" color="secondary">
+                  No users found.
+                </Text>
+              )}
+            </VStack>
+          </LayoutContent>
+        }
       />
-    </>
+    </Dialog>
   );
 }
