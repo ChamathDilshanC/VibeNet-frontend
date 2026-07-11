@@ -17,6 +17,7 @@ export interface AuthUser {
    *  The backend always returns it, falling back to the username when unset. */
   display_name: string;
   email?: string;
+  phone_number?: string;
   public_key?: string;
   /** Google account photo, re-synced by the backend on each Google sign-in.
    *  Absent for password accounts, which render initials instead. */
@@ -31,6 +32,8 @@ export interface AuthResult {
 export interface RegisterInput {
   username: string;
   password: string;
+  email: string;
+  phoneNumber: string;
   publicKey: string;
 }
 
@@ -83,6 +86,8 @@ export function register(input: RegisterInput): Promise<AuthResult> {
   return postJSON<AuthResult>('/api/auth/register', {
     username: input.username,
     password: input.password,
+    email: input.email,
+    phone_number: input.phoneNumber,
     public_key: input.publicKey,
   });
 }
