@@ -19,6 +19,7 @@ import { Fragment, useEffect, useRef, useState } from 'react';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import {
+  ArrowUturnRightIcon,
   CheckCircleIcon as CheckCircleOutlineIcon,
   FaceSmileIcon,
   PaperClipIcon,
@@ -115,6 +116,20 @@ function DeliveryTicks({ status }: { status: MessageStatus }) {
   );
 }
 
+// "Forwarded" label pinned to the top of a bubble, above the username/text.
+// Muted, smaller and italic to sit quietly out of the way like other chat
+// apps. `tone` matches the bubble it lives on (white text on the blue sender
+// bubble, grey on the light receiver bubble).
+function ForwardedTag({ tone }: { tone: 'sender' | 'receiver' }) {
+  const color = tone === 'sender' ? 'text-white/70' : 'text-gray-400';
+  return (
+    <span className={`mb-1 flex items-center gap-1 text-[11px] italic ${color}`}>
+      <ArrowUturnRightIcon className="h-3 w-3" aria-hidden="true" />
+      Forwarded
+    </span>
+  );
+}
+
 // Truncated one-line preview of a message body — used by the reply preview and
 // the pinned banner.
 function previewText(text: string): string {
@@ -146,6 +161,7 @@ function MessageRow({
   selectMode,
   isSelected,
   onToggleSelect,
+  showReadReceipt,
 }: {
   message: ChatMessage;
   isMine: boolean;
@@ -156,16 +172,22 @@ function MessageRow({
   selectMode: boolean;
   isSelected: boolean;
   onToggleSelect: (message: ChatMessage) => void;
+  // Messenger/Instagram-style "seen" marker: when true this is the newest of
+  // our messages the recipient has read, so their avatar sits below the bubble.
+  showReadReceipt: boolean;
 }) {
-  // The hover chevron lives in the bubble's top corner. Keep it mounted but
-  // invisible until the row is hovered (or its menu is open, so it doesn't
-  // vanish while you're using it). On the blue sender bubble the chevron is
-  // tinted white for contrast; on the light receiver bubble it stays grey.
+  // The hover chevron lives in the bubble's top-right corner — on both our own
+  // and the peer's bubbles it stays pinned to the far right so the trigger is
+  // always in a predictable spot. Keep it mounted but invisible until the row
+  // is hovered (or its menu is open, so it doesn't vanish while you're using
+  // it). The bubbles reserve right padding (pr-9) so it never crowds the text.
+  // On the blue sender bubble the chevron is tinted white for contrast; on the
+  // light receiver bubble it stays grey.
   const trigger = (
     <div
       className={[
-        'absolute top-1 z-10 transition-opacity',
-        isMine ? 'left-1 [&_svg]:text-white/90' : 'right-1 [&_svg]:text-gray-500',
+        'absolute right-1 top-1 z-10 transition-opacity',
+        isMine ? '[&_svg]:text-white/90' : '[&_svg]:text-gray-500',
         menuOpen ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 focus-within:opacity-100',
       ].join(' ')}
       // The menu is an action surface, not part of the selection hit area.
@@ -220,10 +242,13 @@ function MessageRow({
       )}
 
       {isMine ? (
-        // Sender bubble — right aligned, solid blue, white text.
-        <div className="vibe-msg-in flex flex-1 origin-bottom-right justify-end">
-          <div className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] px-4 py-2.5 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
+        // Sender bubble — right aligned, solid blue, white text. Stacked as a
+        // column so the read-receipt avatar can sit just below the bubble at
+        // the bottom-right, outside it.
+        <div className="vibe-msg-in flex flex-1 origin-bottom-right flex-col items-end">
+          <div className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
             {!selectMode && trigger}
+            {message.isForwarded && <ForwardedTag tone="sender" />}
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
               {message.text}
             </p>
@@ -238,13 +263,25 @@ function MessageRow({
               {message.status && <DeliveryTicks status={message.status} />}
             </span>
           </div>
+          {showReadReceipt && (
+            // The recipient's avatar, tucked just under the bubble on the right —
+            // an Instagram/Messenger "seen" cue alongside the blue double-tick.
+            <Avatar
+              src={conversation.peerAvatarUrl}
+              name={conversation.peerUsername}
+              size={16}
+              alt={`Seen by ${conversation.peerUsername}`}
+              className="mt-1 ring-1 ring-white"
+            />
+          )}
         </div>
       ) : (
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
           <Avatar src={conversation.peerAvatarUrl} name={conversation.peerUsername} size="small" />
-          <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white px-4 py-2.5 shadow-sm ring-1 ring-black/[0.03]">
+          <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
+            {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
               {conversation.peerUsername}
             </span>
@@ -385,6 +422,16 @@ export function ChatView({
   const latestPinned = pinnedMessages[pinnedMessages.length - 1];
   const replyIsMine = activeReply?.senderId === myUserId;
 
+  // The latest of our own messages the recipient has read — the anchor for the
+  // Messenger-style "seen" avatar. Messages are sorted oldest→newest, so we scan
+  // from the end for the first one we sent that's marked read. Derived from the
+  // per-message read status the store already tracks rather than held as extra
+  // state, so it can never drift out of sync with the ticks.
+  const lastReadMessageId =
+    [...messages]
+      .reverse()
+      .find((m) => m.senderId === myUserId && m.status === 'read')?.id ?? null;
+
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col bg-gradient-to-br from-[#f1ecfb] via-[#eaeefb] to-[#e6effb]">
       {/* Header — either peer identity + connection, or the selection toolbar. */}
@@ -493,6 +540,7 @@ export function ChatView({
                   selectMode={selectMode}
                   isSelected={selectedIds.has(message.id)}
                   onToggleSelect={toggleSelect}
+                  showReadReceipt={isMine && message.id === lastReadMessageId}
                 />
               </Fragment>
             );

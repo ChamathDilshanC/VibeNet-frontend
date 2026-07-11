@@ -31,6 +31,9 @@ export interface ChatMessage {
   /** "Kept"/starred by this user for quick access — a purely local flag, never
    *  sent over the wire. Persisted here so it survives a reload like the message. */
   kept?: boolean;
+  /** True when this message was forwarded from another conversation. Renders a
+   *  "Forwarded" label at the top of the bubble, WhatsApp/Messenger-style. */
+  isForwarded?: boolean;
 }
 
 function storageKey(chatRoomId: string): string {
@@ -77,6 +80,7 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
             status: mergeStatus(prev.status, message.status),
             pinned: message.pinned ?? prev.pinned,
             kept: message.kept ?? prev.kept,
+            isForwarded: message.isForwarded ?? prev.isForwarded,
           }
         : message,
     );
