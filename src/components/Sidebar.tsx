@@ -26,7 +26,7 @@ import {
   ShieldCheckIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
-import type { AuthUser } from '@/lib/api';
+import { resolveAvatarUrl, type AuthUser } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
 
 export function Sidebar({
@@ -73,7 +73,7 @@ export function Sidebar({
             label={user?.display_name || user?.username || 'Account'}
             icon={
               <Avatar
-                src={user?.avatar_url}
+                src={resolveAvatarUrl(user?.avatar_url)}
                 name={user?.display_name || user?.username}
                 size="tiny"
               />
@@ -112,7 +112,7 @@ export function Sidebar({
                 label={name}
                 icon={
                   <Avatar
-                    src={conversation.peerAvatarUrl}
+                    src={resolveAvatarUrl(conversation.peerAvatarUrl)}
                     name={name}
                     size="tiny"
                   />

@@ -23,7 +23,7 @@ import {
   MagnifyingGlassIcon,
   ShieldCheckIcon,
 } from '@heroicons/react/24/outline';
-import { ApiError } from '@/lib/api';
+import { ApiError, resolveAvatarUrl } from '@/lib/api';
 import { apiClient } from '@/lib/apiClient';
 
 interface SearchResult {
@@ -163,7 +163,7 @@ export function NewChatDialog({
               {selected ? (
                 <VStack gap={3}>
                   <HStack gap={2} vAlign="center">
-                    <Avatar src={selected.avatar_url} name={resultName(selected)} size="small" />
+                    <Avatar src={resolveAvatarUrl(selected.avatar_url)} name={resultName(selected)} size="small" />
                     <Text type="body" weight="semibold">
                       {resultName(selected)}
                     </Text>
@@ -224,7 +224,7 @@ export function NewChatDialog({
                               .filter(Boolean)
                               .join(' · ') || undefined
                           }
-                          startContent={<Avatar src={user.avatar_url} name={resultName(user)} size="small" />}
+                          startContent={<Avatar src={resolveAvatarUrl(user.avatar_url)} name={resultName(user)} size="small" />}
                           endContent={
                             user.require_pin ? (
                               <Icon icon={ShieldCheckIcon} size="sm" />

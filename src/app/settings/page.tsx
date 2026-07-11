@@ -23,7 +23,7 @@ import { TextInput } from '@astryxdesign/core/TextInput';
 import { CameraIcon } from '@heroicons/react/24/solid';
 import { UserCircleIcon } from '@heroicons/react/24/outline';
 import { gooeyToast } from 'goey-toast';
-import { ApiError, type AuthUser } from '@/lib/api';
+import { ApiError, resolveAvatarUrl, type AuthUser } from '@/lib/api';
 import { updateProfile, uploadAvatar } from '@/lib/user';
 import { useAuth } from '@/hooks/useAuth';
 
@@ -231,7 +231,7 @@ function ProfilePanel({
       {/* Avatar card */}
       <div className={`${GLASS_CARD} flex flex-col items-center gap-4 p-6 text-center sm:flex-row sm:items-center sm:gap-6 sm:text-left sm:p-8`}>
         <AvatarUploader
-          src={previewUrl ?? user.avatar_url}
+          src={previewUrl ?? resolveAvatarUrl(user.avatar_url)}
           name={currentDisplayName}
           onSelect={handleSelectAvatar}
           disabled={saving}

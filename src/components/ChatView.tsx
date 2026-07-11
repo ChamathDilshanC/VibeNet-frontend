@@ -37,6 +37,7 @@ import {
 } from '@heroicons/react/24/solid';
 import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
+import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { MessageContextMenu } from './MessageContextMenu';
@@ -340,7 +341,7 @@ function MessageRow({
               transition={{ type: 'spring', stiffness: 500, damping: 32, mass: 0.7 }}
               className="mb-2.5 shrink-0">
               <Avatar
-                src={conversation.peerAvatarUrl}
+                src={resolveAvatarUrl(conversation.peerAvatarUrl)}
                 name={peerName(conversation)}
                 size={16}
                 alt={`Seen by ${peerName(conversation)}`}
@@ -352,7 +353,7 @@ function MessageRow({
       ) : (
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
-          <Avatar src={conversation.peerAvatarUrl} name={peerName(conversation)} size="small" />
+          <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
           <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
@@ -555,7 +556,7 @@ export function ChatView({
         </header>
       ) : (
         <header className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white/70 px-4 py-3 backdrop-blur-sm sm:px-6">
-          <Avatar src={conversation.peerAvatarUrl} name={peerName(conversation)} size="small" />
+          <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-semibold text-gray-900">
               {peerName(conversation)}

@@ -8,6 +8,7 @@
 
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Text } from '@astryxdesign/core/Text';
+import { resolveAvatarUrl } from '@/lib/api';
 import type { Conversation } from '@/lib/conversations';
 
 const MAX_RECENT = 6;
@@ -51,7 +52,7 @@ export function EmptyState({
                     onClick={() => onSelect(conversation.peerId)}
                     className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04]">
                     <Avatar
-                      src={conversation.peerAvatarUrl}
+                      src={resolveAvatarUrl(conversation.peerAvatarUrl)}
                       name={conversation.peerUsername}
                       size="small"
                     />

@@ -8,6 +8,19 @@ export const API_BASE_URL = (
   process.env.NEXT_PUBLIC_API_BASE_URL ?? 'http://localhost:8080'
 ).replace(/\/$/, '');
 
+// resolveAvatarUrl turns a stored avatar reference into a loadable image URL.
+//
+// Uploaded avatars are persisted by the backend as origin-relative paths
+// (e.g. "/uploads/avatars/x.jpg") so the value stays correct across
+// environments; those are prefixed with the API origin here. References that
+// are already absolute — Google account photos (http/https), local file
+// previews (blob:), or inline data: URIs — are returned unchanged.
+export function resolveAvatarUrl(url?: string): string | undefined {
+  if (!url) return undefined;
+  if (/^(?:https?:|blob:|data:)/i.test(url)) return url;
+  return `${API_BASE_URL}${url.startsWith('/') ? '' : '/'}${url}`;
+}
+
 // Shape of the user object returned by the auth endpoints (see backend
 // userSummary / authResponse in internal/api/handler.go).
 export interface AuthUser {

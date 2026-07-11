@@ -15,6 +15,7 @@ import { Layout, LayoutContent } from '@astryxdesign/core/Layout';
 import { List, ListItem } from '@astryxdesign/core/List';
 import { VStack } from '@astryxdesign/core/Stack';
 import { Text } from '@astryxdesign/core/Text';
+import { resolveAvatarUrl } from '@/lib/api';
 import type { Conversation } from '@/lib/conversations';
 
 export function ForwardDialog({
@@ -77,7 +78,7 @@ export function ForwardDialog({
                       key={c.peerId}
                       label={c.peerUsername}
                       startContent={
-                        <Avatar src={c.peerAvatarUrl} name={c.peerUsername} size="small" />
+                        <Avatar src={resolveAvatarUrl(c.peerAvatarUrl)} name={c.peerUsername} size="small" />
                       }
                       isDisabled={forwardingTo !== null}
                       onClick={() => void handlePick(c.peerId)}
