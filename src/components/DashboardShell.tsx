@@ -57,6 +57,7 @@ interface InboundFrame {
   delivered?: boolean;
   reader_id?: string;
   online?: string[];
+  is_forwarded?: boolean;
 }
 
 // How often to re-query which peers are online (ms). Presence has no push
@@ -369,6 +370,7 @@ export function DashboardShell({
         nonce,
         message_id: messageId,
         timestamp,
+        is_forwarded: isForwarded,
       } = frame;
       if (!senderId || !chatRoomId || !ciphertext || !nonce || !messageId) return;
 
@@ -417,6 +419,9 @@ export function DashboardShell({
             senderId,
             text,
             timestamp: timestamp ?? Date.now(),
+            // Render the "Forwarded" tag on the recipient's bubble too when the
+            // sender flagged it; absent on normal messages, so it stays falsy.
+            isForwarded,
           });
         } catch {
           // Undecryptable even after a key-refresh retry — genuinely
@@ -589,6 +594,10 @@ export function DashboardShell({
         ciphertext,
         nonce,
         timestamp,
+        // Tell the recipient (and the history record) this is a forward, so
+        // their bubble renders the "Forwarded" tag too — the flag rides
+        // alongside the ciphertext, never the plaintext.
+        is_forwarded: true,
       });
       if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
 
@@ -598,6 +607,9 @@ export function DashboardShell({
         text: message.text,
         timestamp,
         status: 'sent',
+        // Mark our own optimistic bubble as forwarded up front — without this
+        // the tag never appears on the sender's side until a history refetch.
+        isForwarded: true,
       });
       gooeyToast(`Forwarded to ${target.peerUsername}`);
     } catch (err) {

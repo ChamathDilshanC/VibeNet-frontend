@@ -122,10 +122,13 @@ function DeliveryTicks({ status }: { status: MessageStatus }) {
 // apps. `tone` matches the bubble it lives on (white text on the blue sender
 // bubble, grey on the light receiver bubble).
 function ForwardedTag({ tone }: { tone: 'sender' | 'receiver' }) {
-  const color = tone === 'sender' ? 'text-white/70' : 'text-gray-400';
+  // Muted against whichever bubble it sits on: a translucent white on the blue
+  // sender bubble, grey-500 on the light receiver bubble. mb-1.5 gives it clear
+  // air above the username/text so it reads as a header, not part of the body.
+  const color = tone === 'sender' ? 'text-white/75' : 'text-gray-500';
   return (
-    <span className={`mb-1 flex items-center gap-1 text-[11px] italic ${color}`}>
-      <ArrowUturnRightIcon className="h-3 w-3" aria-hidden="true" />
+    <span className={`mb-1.5 flex items-center gap-1 text-xs italic ${color}`}>
+      <ArrowUturnRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
       Forwarded
     </span>
   );
