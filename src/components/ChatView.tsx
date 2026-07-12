@@ -15,7 +15,7 @@
 
 'use client';
 
-import { Fragment, useEffect, useRef, useState } from 'react';
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
@@ -249,6 +249,7 @@ function MessageRow({
   isMine,
   senderName,
   senderAvatarUrl,
+  senderColor,
   readReceiptName,
   readReceiptAvatarUrl,
   actions,
@@ -265,6 +266,11 @@ function MessageRow({
   // peer) and group rooms (looked up per message from the roster).
   senderName: string;
   senderAvatarUrl?: string;
+  // The sender's name-label color — resolved by the parent so it can be
+  // assigned uniquely per room (see ChatView's groupSenderColors) rather than
+  // picked in isolation here, which is what let two different senders land on
+  // the same color by coincidence.
+  senderColor: string;
   // Who the "seen" avatar depicts — the DM peer. Unused in group rooms, where
   // showReadReceipt is always false (there are no group read receipts).
   readReceiptName?: string;
@@ -438,7 +444,7 @@ function MessageRow({
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span
               className="mb-0.5 block text-[13px] font-semibold"
-              style={{ color: colorForSender(message.senderId) }}>
+              style={{ color: senderColor }}>
               {senderName}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
@@ -553,6 +559,28 @@ export function ChatView({
     group
       ? group.members.find((m) => m.user_id === senderId)?.avatar_url
       : conversation?.peerAvatarUrl;
+
+  // Assigns each group member a name color that's unique within THIS room —
+  // sorted by user id (not join order, which can shift if someone leaves and
+  // rejoins) so the mapping is deterministic and never reshuffles on its own.
+  // A per-sender hash (colorForSender) can't guarantee that: two people's ids
+  // can hash into the same one of only 10 slots, which is exactly what showed
+  // two different members' names in the same color. Colors only repeat once a
+  // room has more members than the palette has colors.
+  const groupSenderColors = useMemo(() => {
+    const map = new Map<string, string>();
+    if (!group) return map;
+    const sortedIds = [...group.members.map((m) => m.user_id)].sort();
+    sortedIds.forEach((id, index) => {
+      map.set(id, SENDER_NAME_COLORS[index % SENDER_NAME_COLORS.length]);
+    });
+    return map;
+  }, [group]);
+  const senderColorOf = (senderId: string): string =>
+    group
+      ? (groupSenderColors.get(senderId) ?? SENDER_NAME_COLORS[0])
+      : colorForSender(senderId);
+
   // Gates "Add member" in the header menu — owner/admin only, mirroring the
   // backend's requireGroupAdmin check on that call.
   const canManage =
@@ -924,6 +952,7 @@ export function ChatView({
                     isMine={isMine}
                     senderName={senderNameOf(message.senderId)}
                     senderAvatarUrl={senderAvatarOf(message.senderId)}
+                    senderColor={senderColorOf(message.senderId)}
                     readReceiptName={conversation ? peerName(conversation) : undefined}
                     readReceiptAvatarUrl={conversation?.peerAvatarUrl}
                     actions={actions}
