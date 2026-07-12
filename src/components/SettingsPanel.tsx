@@ -30,7 +30,6 @@ import { VStack } from '@astryxdesign/core/Layout';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Switch } from '@astryxdesign/core/Switch';
 import { Text } from '@astryxdesign/core/Text';
-import { TextInput } from '@astryxdesign/core/TextInput';
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import {
   ArrowLeft,
@@ -103,13 +102,17 @@ const GLASS =
   'border-gray-200 bg-white/80 shadow-xl shadow-gray-900/5 ' +
   'dark:border-gray-800 dark:bg-gray-900/60 dark:shadow-black/30';
 
-// The settings nav rail — frosted glass that follows the theme: near-white over the
-// light canvas, deep slate in dark. (It used to be dark in both, which only worked
-// while the surrounding app was permanently light.)
+// The settings nav rail. A solid, distinct surface one step deeper than the content
+// beside it — that contrast is what gives the split its depth.
+//
+// It follows the theme rather than staying dark in both: a permanently gray-950 rail
+// would reintroduce exactly the light/dark seam we just removed from the app, and would
+// fight the crisp light palette. gray-50 against the white content area reads as the
+// same Discord-style depth step, just in the right key.
 const RAIL =
-  'border backdrop-blur-xl transition-colors duration-300 ease-in-out ' +
-  'border-gray-200 bg-gray-50/80 shadow-xl shadow-gray-900/5 ' +
-  'dark:border-gray-800 dark:bg-gray-900/60 dark:shadow-black/30';
+  'border-r transition-colors duration-300 ease-in-out ' +
+  'border-gray-200 bg-gray-50 ' +
+  'dark:border-gray-800 dark:bg-gray-950';
 
 function SettingsCard({
   children,
@@ -143,25 +146,22 @@ function AvatarUploader({
     <label
       className={
         'group relative inline-flex cursor-pointer rounded-full outline-none ' +
-        'ring-offset-2 ring-offset-transparent focus-within:ring-2 focus-within:ring-[color:var(--vibe-blue)] ' +
+        'focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2 ' +
+        'focus-within:ring-offset-white dark:focus-within:ring-offset-gray-900 ' +
         (disabled ? 'pointer-events-none opacity-70' : '')
       }
       aria-label="Change profile picture"
     >
-      {/* Gradient halo behind the avatar, intensified on hover. */}
-      <span
-        aria-hidden
-        className="absolute -inset-1 rounded-full opacity-70 blur-md transition-opacity duration-300 group-hover:opacity-100"
-        style={{ background: 'var(--vibe-gradient)' }}
-      />
-      <span className="relative rounded-full ring-4 ring-white transition-colors duration-300 dark:ring-gray-900">
+      {/* Thick border in the CONTENT surface's colour (see <main>), so the avatar reads
+          as punched out of the banner it overlaps rather than pasted on top of it. */}
+      <span className="relative block rounded-full border-4 border-white bg-white transition-colors duration-300 dark:border-gray-900 dark:bg-gray-900">
         <Avatar src={src} name={name} size={128} alt={name} />
         {/* Dark overlay + camera icon, revealed on hover or keyboard focus. */}
         <span
-          className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-full bg-black/50 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
+          className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-full bg-black/55 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
           aria-hidden
         >
-          <CameraIcon className="h-7 w-7" />
+          <Camera className="h-7 w-7" strokeWidth={1.75} />
           <span className="text-xs font-medium">Change</span>
         </span>
       </span>
@@ -182,20 +182,88 @@ function AvatarUploader({
   );
 }
 
-// ReadOnlyField shows a sign-up-time value (email / phone) that isn't editable
-// here, styled to match the editable TextInputs so the grid stays visually even.
-function ReadOnlyField({ label, value }: { label: string; value?: string }) {
+// Field is the premium text input used across the profile form: a leading lucide icon
+// inside the control, a generous hit area, and a glowing focus ring.
+//
+// It replaces Astryx's TextInput here because that component has no slot for an
+// embedded icon. Everything TextInput was giving us is reproduced deliberately — the
+// label is bound via htmlFor/id, the error is announced with role="alert" and wired to
+// the input through aria-describedby + aria-invalid, and `readOnly` (not `disabled`)
+// keeps the sign-up values focusable and screen-reader-visible.
+function Field({
+  id,
+  label,
+  icon: Icon,
+  value,
+  onChange,
+  description,
+  error,
+  readOnly = false,
+  placeholder,
+  name,
+  required = false,
+}: {
+  id: string;
+  label: string;
+  icon: LucideIcon;
+  value: string;
+  onChange?: (value: string) => void;
+  description?: string;
+  error?: string | null;
+  readOnly?: boolean;
+  placeholder?: string;
+  name?: string;
+  required?: boolean;
+}) {
+  const describedBy = error ? `${id}-error` : description ? `${id}-hint` : undefined;
+
   return (
-    <TextInput
-      type="text"
-      label={label}
-      value={value ?? ''}
-      onChange={() => {}}
-      placeholder="Not set"
-      size="lg"
-      isDisabled
-      disabledMessage="Set when you registered and can't be changed here."
-    />
+    <div className="flex flex-col gap-1.5">
+      <label htmlFor={id} className="text-sm font-medium text-gray-900 dark:text-gray-100">
+        {label}
+        {required && <span className="ml-1 text-red-500">*</span>}
+      </label>
+
+      <div className="relative">
+        <Icon
+          className="pointer-events-none absolute left-3.5 top-1/2 h-[18px] w-[18px] -translate-y-1/2 text-gray-400 dark:text-gray-500"
+          strokeWidth={1.75}
+          aria-hidden
+        />
+        <input
+          id={id}
+          name={name}
+          type="text"
+          value={value}
+          readOnly={readOnly}
+          placeholder={placeholder}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={describedBy}
+          onChange={(e) => onChange?.(e.target.value)}
+          className={[
+            'w-full rounded-xl border py-3.5 pl-11 pr-4 text-sm outline-none',
+            'transition-colors duration-200 ease-in-out',
+            'bg-white text-gray-900 placeholder:text-gray-400',
+            'dark:bg-gray-900/60 dark:text-white dark:placeholder:text-gray-500',
+            'focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50',
+            readOnly ? 'cursor-not-allowed text-gray-500 dark:text-gray-400' : '',
+            error
+              ? 'border-red-400 dark:border-red-500'
+              : 'border-gray-200 dark:border-gray-800',
+          ].join(' ')}
+        />
+      </div>
+
+      {error ? (
+        <span id={`${id}-error`} role="alert" className="text-xs text-red-600 dark:text-red-400">
+          {error}
+        </span>
+      ) : description ? (
+        <span id={`${id}-hint`} className="text-xs text-gray-500 dark:text-gray-400">
+          {description}
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -289,82 +357,100 @@ function ProfilePanel({
   }
 
   return (
-    <form className="flex flex-col gap-6" onSubmit={handleSubmit} noValidate>
-      {/* Identity card — avatar centered above the name it belongs to. */}
-      <SettingsCard className="text-center">
-        <VStack gap={4} hAlign="center">
-          <AvatarUploader
-            src={previewUrl ?? resolveAvatarUrl(user.avatar_url)}
-            name={currentDisplayName}
-            onSelect={handleSelectAvatar}
-            disabled={saving}
-          />
-          <VStack gap={1} hAlign="center">
-            <Heading level={2}>{currentDisplayName}</Heading>
-            <Text type="supporting" color="secondary">
-              @{user.username}
-            </Text>
-            <Text type="supporting" color="secondary">
-              {avatarChanged
-                ? 'New photo ready — click Save changes to apply it.'
-                : 'Click your avatar to upload a new photo. PNG, JPG, WebP, or GIF up to 5 MB.'}
-            </Text>
-          </VStack>
-        </VStack>
-      </SettingsCard>
+    <form onSubmit={handleSubmit} noValidate>
+      {/* Full-bleed banner. Purely decorative, so it's hidden from the a11y tree. */}
+      <div
+        aria-hidden
+        className="h-64 w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600"
+      />
 
-      {/* Account details card. */}
-      <SettingsCard>
-        <VStack gap={5}>
-          <VStack gap={1}>
-            <Heading level={2}>Account details</Heading>
-            <Text type="supporting" color="secondary">
-              How your account presents itself across VibeNet.
-            </Text>
-          </VStack>
+      <div className="px-6 pb-12 sm:px-8">
+        {/* Avatar rides up over the banner's bottom edge; Save sits opposite it. The row
+            stacks on narrow screens so the button never crowds the name. */}
+        <div className="-mt-16 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+            <AvatarUploader
+              src={previewUrl ?? resolveAvatarUrl(user.avatar_url)}
+              name={currentDisplayName}
+              onSelect={handleSelectAvatar}
+              disabled={saving}
+            />
+            <div className="pb-1">
+              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
+                {currentDisplayName}
+              </h2>
+              <p className="text-sm text-gray-500 dark:text-gray-400">@{user.username}</p>
+            </div>
+          </div>
 
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
-            <TextInput
-              type="text"
+          <div className="vibe-cta pb-1">
+            <Button
+              label={saving ? 'Saving…' : 'Save Changes'}
+              type="submit"
+              variant="primary"
+              size="lg"
+              isLoading={saving}
+              isDisabled={!canSave}
+            />
+          </div>
+        </div>
+
+        {/* Upload hint — doubles as the "unsaved photo" cue. */}
+        <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+          {avatarChanged
+            ? 'New photo ready — click Save Changes to apply it.'
+            : 'Click your avatar to upload a new photo. PNG, JPG, WebP, or GIF up to 5 MB.'}
+        </p>
+
+        <div className="mt-10">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Account details</h3>
+          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+            How your account presents itself across VibeNet.
+          </p>
+
+          <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+            <Field
+              id="display_name"
+              name="display_name"
               label="Real Name (Display Name)"
+              icon={User}
               description="What people see across VibeNet."
               value={displayName}
               onChange={setDisplayName}
-              htmlName="display_name"
-              size="lg"
-              status={
-                displayNameErr ? ({ type: 'error', message: displayNameErr } as const) : undefined
-              }
+              error={displayNameErr}
             />
-            <TextInput
-              type="text"
+            <Field
+              id="username"
+              name="username"
               label="Username"
+              icon={AtSign}
               description="Your unique handle in search."
               value={username}
               onChange={setUsername}
-              htmlName="username"
-              size="lg"
-              isRequired
-              status={usernameErr ? ({ type: 'error', message: usernameErr } as const) : undefined}
+              error={usernameErr}
+              required
             />
-            <ReadOnlyField label="Email" value={user.email} />
-            <ReadOnlyField label="Phone Number" value={user.phone_number} />
+            <Field
+              id="email"
+              label="Email"
+              icon={Mail}
+              value={user.email ?? ''}
+              placeholder="Not set"
+              description="Set when you registered and can't be changed here."
+              readOnly
+            />
+            <Field
+              id="phone"
+              label="Phone Number"
+              icon={Phone}
+              value={user.phone_number ?? ''}
+              placeholder="Not set"
+              description="Set when you registered and can't be changed here."
+              readOnly
+            />
           </div>
-
-          <div className="flex justify-end pt-1">
-            <div className="vibe-cta">
-              <Button
-                label={saving ? 'Saving…' : 'Save Changes'}
-                type="submit"
-                variant="primary"
-                size="lg"
-                isLoading={saving}
-                isDisabled={!canSave}
-              />
-            </div>
-          </div>
-        </VStack>
-      </SettingsCard>
+        </div>
+      </div>
     </form>
   );
 }
@@ -809,28 +895,29 @@ export function SettingsPanel({
     </nav>
   );
 
+  // The mobile back-link and (for the non-profile sections) the page title. Profile
+  // opts out of the title: its banner + name already announce the section, and a
+  // heading above a full-bleed banner would just push it off the top.
+  const isProfile = section === 'profile';
+
+  const backLink = isNarrow && (
+    <button
+      type="button"
+      onClick={() => setMobileView('nav')}
+      className="-ml-1 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-gray-400 dark:hover:text-gray-100"
+    >
+      <ArrowLeft className="h-4 w-4" />
+      Settings
+    </button>
+  );
+
   const content = (
-    <VStack gap={6}>
-      {/* Mobile detail view: a back button above the section title. */}
-      {isNarrow && (
-        <button
-          type="button"
-          onClick={() => setMobileView('nav')}
-          className="-ml-1 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-gray-400 dark:hover:text-gray-100"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Settings
-        </button>
-      )}
+    <>
+      {/* Profile is full-bleed (the banner runs edge to edge); the other sections get
+          the usual page padding and a readable measure. */}
+      {isProfile && backLink && <div className="px-6 pt-4 sm:px-8">{backLink}</div>}
 
-      <Heading level={1} type={isNarrow ? undefined : 'display-3'}>
-        {activeItem.label}
-      </Heading>
-
-      {/* Panels are keyed on the persisted values they seed from, so they reseed after
-          a save — or after useAuth's background refresh reports a change from another
-          device — instead of holding stale local state. */}
-      {user && section === 'profile' && (
+      {user && isProfile && (
         <ProfilePanel
           key={`${user.username}:${user.display_name}`}
           user={user}
@@ -838,46 +925,56 @@ export function SettingsPanel({
         />
       )}
 
-      {user && section === 'security' && (
-        <SecurityPanel
-          key={`${user.chat_pin_enabled}:${user.chat_pin_type}`}
-          user={user}
-          onUpdated={onUserUpdated}
-        />
-      )}
+      {!isProfile && (
+        <div className="max-w-4xl px-6 py-8 sm:px-8">
+          <VStack gap={6}>
+            {backLink}
+            <Heading level={1} type={isNarrow ? undefined : 'display-3'}>
+              {activeItem.label}
+            </Heading>
 
-      {section === 'appearance' && <AppearancePanel />}
-    </VStack>
+            {/* Panels are keyed on the persisted values they seed from, so they reseed
+                after a save — or after useAuth's background refresh reports a change
+                from another device — instead of holding stale local state. */}
+            {user && section === 'security' && (
+              <SecurityPanel
+                key={`${user.chat_pin_enabled}:${user.chat_pin_type}`}
+                user={user}
+                onUpdated={onUserUpdated}
+              />
+            )}
+
+            {section === 'appearance' && <AppearancePanel />}
+          </VStack>
+        </div>
+      )}
+    </>
   );
 
   // Mobile, nav view: the rail owns the pane (no split).
   if (isNarrow && mobileView === 'nav') {
     return (
-      <div className="vibe-settings h-full p-4">
-        <div className={`${RAIL} h-full rounded-3xl`}>{nav}</div>
-      </div>
+      <div className={`vibe-settings h-full w-full ${RAIL}`}>{nav}</div>
     );
   }
 
-  // Desktop: a left-aligned split — fixed nav rail, then the forms taking the rest.
-  // Both are inset from the app sidebar (and each other) so the rail reads as its own
-  // floating surface rather than a second column welded to the main nav.
+  // Desktop: an edge-to-edge split filling the dashboard's content area — a fixed nav
+  // rail welded to the left, then the section itself. No outer padding or rounding: the
+  // panel is now the whole surface, which is what lets the profile banner run full
+  // bleed to the top and right edges.
   return (
-    <div className="vibe-settings flex h-full gap-4 p-4 md:gap-6 md:p-6">
-      {/* Full height, so Log Out pins to the bottom of the rail rather than floating
-          under the last section, and the rail reads as a column instead of a stub. */}
+    <div className="vibe-settings flex h-full w-full">
+      {/* Full height, so Log Out pins to the bottom of the rail. */}
       {!isNarrow && (
-        <aside
-          className={`${RAIL} flex h-full w-72 shrink-0 flex-col overflow-y-auto rounded-3xl`}
-        >
+        <aside className={`${RAIL} flex h-full w-80 shrink-0 flex-col overflow-x-hidden overflow-y-auto`}>
           {nav}
         </aside>
       )}
 
-      {/* Left-aligned, not centred: the column is capped and pinned to the start, so it
-          doesn't drift into the middle of a wide window. */}
-      <main className="min-w-0 flex-1 overflow-y-auto">
-        <div className="w-full max-w-3xl">{content}</div>
+      {/* One step lighter than the rail in both themes, so the split keeps its depth in
+          dark instead of both halves collapsing to the same slate. */}
+      <main className="min-w-0 flex-1 overflow-y-auto bg-white transition-colors duration-300 ease-in-out dark:bg-gray-900">
+        {content}
       </main>
     </div>
   );

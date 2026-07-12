@@ -11,6 +11,25 @@
  * The `data-astryx-theme="neutral"` attribute is applied on <html> (see layout.tsx),
  * which activates every token consumed by the Astryx components in the app.
  */
+/*
+ * Cascade-layer order. This MUST come before the imports — the first @layer statement
+ * fixes the order, and layer order beats specificity.
+ *
+ * Both stylesheets ship layers of their own (Tailwind: theme/base/components/utilities;
+ * Astryx: reset/astryx-base/astryx-theme). Left implicit, Astryx's layers register last
+ * (it's imported second) and therefore win — and its reset does
+ * `:where(input, button, …) { padding: 0; background-color: transparent; border-width: 0 }`.
+ * That silently stripped the border, fill and padding off every Tailwind-styled <input>
+ * in the app, however specific the utility.
+ *
+ * The order below fixes that from both sides:
+ *   - Tailwind's preflight (`base`) sits BEFORE Astryx, so the design system's own
+ *     component styles still override it and Astryx components render as intended.
+ *   - Tailwind's `components`/`utilities` sit AFTER, so utility classes win on the
+ *     elements we style ourselves.
+ */
+@layer theme, base, reset, astryx-base, astryx-theme, components, utilities;
+
 @import "tailwindcss";
 @import "@astryxdesign/core/reset.css";
 @import "@astryxdesign/core/astryx.css";
@@ -57,6 +76,46 @@ body {
  * collapsed state only and leaves the resizable expanded width untouched. */
 .vibe-sidenav:not([style*="width"]) {
   width: 72px !important;
+}
+
+/*
+ * Sidebar polish:
+ * - Animate the collapse/expand between the expanded inline width and the 72px rail.
+ *   The :active guard turns the animation off while the mouse is held down inside the
+ *   nav — which is exactly the resize-handle drag — so dragging tracks the cursor
+ *   instead of lagging 250ms behind it.
+ * - overflow-x hidden + nowrap: mid-animation the labels are wider than the shrinking
+ *   rail; without this they wrap and flash a horizontal scrollbar every toggle.
+ * - Separation from the content pane is a box-shadow, NOT margin: the nav sits inside
+ *   an Astryx layout panel with overflow-x auto, and any margin makes the panel's
+ *   scrollWidth exceed its clientWidth — which paints a permanent horizontal scrollbar
+ *   in browsers with classic (non-overlay) scrollbars. Shadows take no layout space,
+ *   so they can't overflow anything.
+ */
+.vibe-sidenav {
+  transition: width 0.25s ease-in-out;
+  overflow-x: hidden;
+  white-space: nowrap;
+  box-shadow: 2px 0 12px rgba(15, 23, 42, 0.06);
+}
+.dark .vibe-sidenav {
+  box-shadow: 2px 0 12px rgba(0, 0, 0, 0.4);
+}
+.vibe-sidenav:active {
+  transition: none;
+}
+/* The layout panel hosting the side nav has overflow-x:auto, and the 3px resize
+ * handle beside the nav always overflows it by that much — painting a permanent
+ * horizontal scrollbar under the sidebar in browsers with classic (non-overlay)
+ * scrollbars. Scoped with :has so no other layout panel changes behaviour. */
+.astryx-layout-panel:has(> * > .vibe-sidenav),
+.astryx-layout-panel:has(.vibe-sidenav) {
+  overflow-x: hidden;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vibe-sidenav {
+    transition: none;
+  }
 }
 
 /*

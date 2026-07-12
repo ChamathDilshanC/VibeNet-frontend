@@ -874,7 +874,7 @@ export function DashboardShell({
         // the tag never appears on the sender's side until a history refetch.
         isForwarded: true,
       });
-      gooeyToast(`Forwarded to ${target.peerUsername}`);
+      gooeyToast(`Forwarded to ${peerName(target)}`);
     } catch (err) {
       gooeyToast('Could not forward message', {
         description: err instanceof Error ? err.message : undefined,
@@ -1001,7 +1001,7 @@ export function DashboardShell({
             <LayoutContent padding={6}>
               <VStack gap={2}>
                 <Heading level={1} type="display-3">
-                  Welcome{user ? `, ${user.username}` : ''}
+                  Welcome{user ? `, ${user.display_name || user.username}` : ''}
                 </Heading>
                 <Text type="body" color="secondary">
                   Your end-to-end encrypted workspace is ready. Pick a

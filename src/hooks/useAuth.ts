@@ -67,10 +67,25 @@ export function useAuth() {
     setState({ ready: true, user });
   }, []);
 
+  // Logout is a two-step confirm: the button raises a toast, and only its action
+  // button actually clears the session — dismissing (or ignoring) it cancels. The
+  // fixed id means hammering the button re-uses one toast instead of stacking them.
   function logout() {
-    clearSession();
-    gooeyToast('Signed out.', { description: 'Your session on this device was cleared.' });
-    router.replace('/');
+    gooeyToast.warning('Log out of VibeNet?', {
+      id: 'logout-confirm',
+      description: 'Your session on this device will be cleared.',
+      duration: 8000,
+      action: {
+        label: 'Log out',
+        onClick: () => {
+          clearSession();
+          gooeyToast('Signed out.', {
+            description: 'Your session on this device was cleared.',
+          });
+          router.replace('/login');
+        },
+      },
+    });
   }
 
   return { ...state, logout, updateUser };

@@ -9,6 +9,8 @@
 
 'use client';
 
+import { useEffect, useState } from 'react';
+import { useTheme } from 'next-themes';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Divider } from '@astryxdesign/core/Divider';
 import {
@@ -22,10 +24,13 @@ import {
   ArrowRightStartOnRectangleIcon,
   Cog6ToothIcon,
   MagnifyingGlassIcon,
+  MoonIcon,
   PlusIcon,
   ShieldCheckIcon,
+  SunIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
+import { ChevronsLeft } from 'lucide-react';
 import { resolveAvatarUrl, type AuthUser } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
 import type { DashboardView } from './DashboardShell';
@@ -57,27 +62,79 @@ export function Sidebar({
   onLogout: () => void;
 }) {
   const isSettingsActive = activeView === 'settings';
+
+  // Collapse is controlled here (SideNav's built-in bottom button is disabled) so the
+  // toggle can live in the header beside the logo instead.
+  const [isCollapsed, setIsCollapsed] = useState(false);
+
+  // Quick light/dark flip, usable even while collapsed (icon survives; label hides).
+  // The Appearance tab in Settings stays the full control (incl. "system").
+  const { resolvedTheme, setTheme } = useTheme();
+  // next-themes only knows the real theme after reading the DOM on the client; render
+  // a stable icon until then so hydration markup matches the server's.
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- post-hydration flag
+    setMounted(true);
+  }, []);
+  const isDark = mounted && resolvedTheme === 'dark';
+
   return (
     <SideNav
       className="vibe-sidenav"
-      collapsible
-      resizable={{ defaultWidth: 300, minWidth: 220, maxWidth: 420 }}
+      collapsible={{
+        isCollapsed,
+        onCollapsedChange: setIsCollapsed,
+        hasButton: false,
+      }}
+      resizable={{ defaultWidth: 320, minWidth: 240, maxWidth: 420 }}
       header={
-        <a
-          href="/dashboard"
-          aria-label="VibeNet home"
-          className="flex items-center px-3 py-2">
-          <img
-            src="/logo/vibenet-logo.png"
-            alt="VibeNet"
-            width={1787}
-            height={521}
-            className="h-auto w-24"
-          />
-        </a>
+        <div className="flex items-center justify-between gap-1 px-3 py-2">
+          {/* Logo can't fit the 72px collapsed rail — the chevron stands in alone. */}
+          {!isCollapsed && (
+            <a href="/dashboard" aria-label="VibeNet home" className="flex min-w-0 items-center">
+              <img
+                src="/logo/vibenet-logo.png"
+                alt="VibeNet"
+                width={1787}
+                height={521}
+                className="h-auto w-24"
+              />
+            </a>
+          )}
+          <button
+            type="button"
+            onClick={() => setIsCollapsed((c) => !c)}
+            aria-label={isCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!isCollapsed}
+            className={[
+              'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg',
+              'text-gray-500 outline-none transition-colors duration-200',
+              'hover:bg-gray-200/60 hover:text-gray-900',
+              'dark:text-gray-400 dark:hover:bg-gray-800/60 dark:hover:text-gray-100',
+              'focus-visible:ring-2 focus-visible:ring-blue-500',
+              isCollapsed ? 'mx-auto' : '',
+            ].join(' ')}
+          >
+            <ChevronsLeft
+              className={
+                'h-5 w-5 transition-transform duration-300 ease-in-out ' +
+                (isCollapsed ? 'rotate-180' : '')
+              }
+              strokeWidth={1.75}
+            />
+          </button>
+        </div>
       }
       footer={
         <SideNavSection title="Account" isHeaderHidden>
+          {/* Icon-only when collapsed, so the theme stays switchable either way. The
+              label reflects the action (what you'll switch TO), not the current state. */}
+          <SideNavItem
+            label={isDark ? 'Light mode' : 'Dark mode'}
+            icon={isDark ? SunIcon : MoonIcon}
+            onClick={() => setTheme(isDark ? 'light' : 'dark')}
+          />
           <SideNavItem
             label="Chat PIN"
             icon={ShieldCheckIcon}

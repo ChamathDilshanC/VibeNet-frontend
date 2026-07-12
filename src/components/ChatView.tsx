@@ -372,7 +372,13 @@ function MessageRow({
                 name={peerName(conversation)}
                 size={16}
                 alt={`Seen by ${peerName(conversation)}`}
-                className="ring-1 ring-white"
+                // rounded-full is load-bearing: this className lands on the Avatar's
+                // ROOT element, whose border-radius is 0 (the circle is clipped on an
+                // inner div). Tailwind's ring is a box-shadow that follows the
+                // element's own radius, so without it the ring draws as a square —
+                // invisible white-on-white in light mode, glaring in dark. The ring is
+                // canvas-coloured per theme so it reads as a cut-out gap, not a frame.
+                className="rounded-full ring-1 ring-white dark:ring-gray-950"
               />
             </motion.div>
           )}

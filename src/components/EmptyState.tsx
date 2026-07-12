@@ -9,7 +9,7 @@
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Text } from '@astryxdesign/core/Text';
 import { resolveAvatarUrl } from '@/lib/api';
-import type { Conversation } from '@/lib/conversations';
+import { peerName, type Conversation } from '@/lib/conversations';
 
 const MAX_RECENT = 6;
 
@@ -45,19 +45,21 @@ export function EmptyState({
           <ul className="flex flex-col gap-1">
             {recent.map((conversation) => {
               const isOnline = onlinePeers.has(conversation.peerId);
+              // Real name first, username as the fallback (peerName handles both).
+              const name = peerName(conversation);
               return (
                 <li key={conversation.peerId}>
                   <button
                     type="button"
                     onClick={() => onSelect(conversation.peerId)}
-                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04]">
+                    className="flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.06]">
                     <Avatar
                       src={resolveAvatarUrl(conversation.peerAvatarUrl)}
-                      name={conversation.peerUsername}
+                      name={name}
                       size="small"
                     />
                     <span className="flex-1 truncate text-sm font-medium text-gray-800 dark:text-gray-100">
-                      {conversation.peerUsername}
+                      {name}
                     </span>
                     <span
                       role="img"
