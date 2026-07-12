@@ -1,10 +1,15 @@
 // VibeNet — group details popup, opened by clicking the group chat header.
 //
 // Shows the group photo (click to upload a new one), an editable group name,
-// creation date, and the member roster with roles. Mutations live in
-// DashboardShell (onRename / onUploadPhoto call the API and refresh state);
-// this component is presentation + local edit state only, like the other
-// dialogs. Any member may rename or change the photo — same policy as invites.
+// creation date, and the member roster with role badges. Mutations live in
+// DashboardShell (onRename / onUploadPhoto / onUpdateRole call the API and
+// refresh state); this component is presentation + local edit state only,
+// like the other dialogs.
+//
+// Renaming and the photo stay open to any member (matches the invite policy
+// before roles existed). Member MANAGEMENT — inviting, and promoting/demoting
+// between admin and member — is gated to the owner and admins, mirroring the
+// backend's requireGroupAdmin check exactly (see lib/groups canManageGroup).
 
 'use client';
 
@@ -20,7 +25,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { TextInput } from '@astryxdesign/core/TextInput';
 import { CameraIcon, UserPlusIcon } from '@heroicons/react/24/outline';
 import { resolveAvatarUrl } from '@/lib/api';
-import type { Group } from '@/lib/groups';
+import { canManageGroup, type Group, type GroupRole } from '@/lib/groups';
 
 const MAX_GROUP_NAME_LENGTH = 64;
 
@@ -31,6 +36,14 @@ function memberLabel(member: Group['members'][number]): string {
   return member.display_name.trim() || member.username;
 }
 
+// Role badge — blue for the owner, a distinct purple for admins, nothing for
+// a plain member (an unbadged row already reads as "regular member").
+function RoleBadge({ role }: { role: GroupRole }) {
+  if (role === 'owner') return <Badge variant="info" label="Owner" />;
+  if (role === 'admin') return <Badge variant="purple" label="Admin" />;
+  return null;
+}
+
 export function GroupDetailsDialog({
   isOpen,
   onOpenChange,
@@ -38,9 +51,11 @@ export function GroupDetailsDialog({
   currentUserId,
   isSavingName,
   isUploadingPhoto,
+  updatingRoleUserId,
   onRename,
   onUploadPhoto,
   onInviteMember,
+  onUpdateRole,
 }: {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
@@ -50,10 +65,14 @@ export function GroupDetailsDialog({
   isSavingName: boolean;
   /** True while a photo upload is in flight — overlays the avatar. */
   isUploadingPhoto: boolean;
+  /** The member row currently being promoted/demoted — disables its action. */
+  updatingRoleUserId: string | null;
   onRename: (name: string) => void;
   onUploadPhoto: (file: File) => void;
-  /** Jumps to the existing invite dialog. */
+  /** Jumps to the existing invite dialog. Owner/admin only — see canManageGroup. */
   onInviteMember: () => void;
+  /** Promotes a member to admin or demotes an admin back to member. */
+  onUpdateRole: (userId: string, role: 'admin' | 'member') => void;
 }) {
   // Local draft of the name; null means "not edited yet — mirror the group".
   // Kept as a draft (not synced via effect) so a live group_update refetch
@@ -62,6 +81,9 @@ export function GroupDetailsDialog({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   if (!group) return null;
+
+  const myRole = group.members.find((m) => m.user_id === currentUserId)?.role;
+  const canManage = canManageGroup(myRole);
 
   const name = nameDraft ?? group.name;
   const trimmedName = name.trim();
@@ -81,7 +103,7 @@ export function GroupDetailsDialog({
   });
 
   return (
-    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={440} purpose="form">
+    <Dialog isOpen={isOpen} onOpenChange={onOpenChange} width={640} purpose="form">
       <Layout
         height="fill"
         header={
@@ -152,38 +174,72 @@ export function GroupDetailsDialog({
                   <Text type="supporting" color="secondary">
                     {group.members.length} {group.members.length === 1 ? 'member' : 'members'}
                   </Text>
-                  <Button
-                    label="Invite"
-                    variant="ghost"
-                    size="sm"
-                    icon={<UserPlusIcon className="h-4 w-4" aria-hidden="true" />}
-                    onClick={onInviteMember}
-                  />
+                  {/* Owner/admin only — a regular member has no way to add people,
+                      matching the backend's requireGroupAdmin gate on this call. */}
+                  {canManage && (
+                    <Button
+                      label="Invite"
+                      variant="ghost"
+                      size="sm"
+                      icon={<UserPlusIcon className="h-4 w-4" aria-hidden="true" />}
+                      onClick={onInviteMember}
+                    />
+                  )}
                 </div>
                 <List>
-                  {group.members.map((member) => (
-                    <ListItem
-                      key={member.user_id}
-                      label={
-                        member.user_id === currentUserId
-                          ? `${memberLabel(member)} (you)`
-                          : memberLabel(member)
-                      }
-                      description={`@${member.username}`}
-                      startContent={
-                        <Avatar
-                          src={resolveAvatarUrl(member.avatar_url)}
-                          name={memberLabel(member)}
-                          size="small"
-                        />
-                      }
-                      endContent={
-                        member.role === 'owner' ? (
-                          <Badge variant="info" label="Owner" />
-                        ) : undefined
-                      }
-                    />
-                  ))}
+                  {group.members.map((member) => {
+                    // Promote/demote is only offered when the viewer can manage
+                    // the group, the target isn't the immutable owner, and it
+                    // isn't the viewer's own row (no self-service role changes).
+                    const canActOnMember =
+                      canManage && member.role !== 'owner' && member.user_id !== currentUserId;
+                    const isUpdating = updatingRoleUserId === member.user_id;
+
+                    return (
+                      <ListItem
+                        key={member.user_id}
+                        label={
+                          member.user_id === currentUserId
+                            ? `${memberLabel(member)} (you)`
+                            : memberLabel(member)
+                        }
+                        description={`@${member.username}`}
+                        startContent={
+                          <Avatar
+                            src={resolveAvatarUrl(member.avatar_url)}
+                            name={memberLabel(member)}
+                            size="small"
+                          />
+                        }
+                        endContent={
+                          <div className="flex items-center gap-2">
+                            <RoleBadge role={member.role} />
+                            {canActOnMember && (
+                              <Button
+                                label={
+                                  isUpdating
+                                    ? 'Saving…'
+                                    : member.role === 'admin'
+                                      ? 'Remove admin'
+                                      : 'Make admin'
+                                }
+                                variant="ghost"
+                                size="sm"
+                                isLoading={isUpdating}
+                                isDisabled={updatingRoleUserId !== null}
+                                onClick={() =>
+                                  onUpdateRole(
+                                    member.user_id,
+                                    member.role === 'admin' ? 'member' : 'admin',
+                                  )
+                                }
+                              />
+                            )}
+                          </div>
+                        }
+                      />
+                    );
+                  })}
                 </List>
               </VStack>
             </VStack>

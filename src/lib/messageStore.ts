@@ -202,6 +202,15 @@ export function deleteMessage(chatRoomId: string, messageId: string): ChatMessag
   );
 }
 
+// clearMessages wipes a room's entire local cache — "Clear chat" from the
+// header menu. Local only, like "delete for me": it doesn't touch history on
+// the server, so a reconnect/history sync can still repopulate anything the
+// backend still has. Returns the (now empty) list for the caller to mirror.
+export function clearMessages(chatRoomId: string): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(chatRoomId, []);
+}
+
 // setMessagePinned toggles a message's room-wide pinned flag in the local cache.
 // Pinning is shared (broadcast over the socket); this keeps the local mirror in
 // step so the bubble and the pinned banner update immediately.

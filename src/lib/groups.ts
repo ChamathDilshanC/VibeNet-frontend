@@ -11,12 +11,22 @@ import { API_BASE_URL, ApiError } from './api';
 import { apiClient } from './apiClient';
 import { getToken } from './session';
 
+export type GroupRole = 'owner' | 'admin' | 'member';
+
 export interface GroupMember {
   user_id: string;
   username: string;
   display_name: string;
   avatar_url?: string;
-  role: 'owner' | 'member';
+  role: GroupRole;
+}
+
+// canManageGroup is the single source of truth for "may add members / change
+// roles" — the owner and admins, never a regular member. Used to gate both
+// the UI (Invite button, promote/demote actions) and mirrors the backend's
+// requireGroupAdmin check, so the two never drift apart.
+export function canManageGroup(role: GroupRole | undefined): boolean {
+  return role === 'owner' || role === 'admin';
 }
 
 export interface Group {
@@ -89,19 +99,23 @@ export function createGroup(input: {
   });
 }
 
-// POST /api/groups/invite — invites a user by username into one of our groups,
-// with the group key wrapped for them by this client.
-export function inviteToGroup(input: {
+// POST /api/groups/{id}/members — adds a user by username to a group we own
+// or admin, with the group key wrapped for them by this client. Backend
+// enforces owner/admin only (403 for a regular member); lands as a pending
+// invite the target must accept.
+export function addGroupMember(input: {
   groupId: string;
   username: string;
   key: WrappedKeyInput;
 }): Promise<{ invite_id: string; status: string }> {
-  return apiClient.post<{ invite_id: string; status: string }>('/api/groups/invite', {
-    group_id: input.groupId,
-    username: input.username,
-    wrapped_key: input.key.wrapped_key,
-    key_nonce: input.key.key_nonce,
-  });
+  return apiClient.post<{ invite_id: string; status: string }>(
+    `/api/groups/${encodeURIComponent(input.groupId)}/members`,
+    {
+      username: input.username,
+      wrapped_key: input.key.wrapped_key,
+      key_nonce: input.key.key_nonce,
+    },
+  );
 }
 
 // GET /api/invites — the signed-in user's pending group invitations.
@@ -162,4 +176,28 @@ export async function uploadGroupAvatar(groupId: string, file: File): Promise<Gr
   }
 
   return data as Group;
+}
+
+// PUT /api/groups/{id}/members/{userId}/role — promotes a member to admin or
+// demotes an admin back to member. Owner-or-admin only; the owner's own role
+// is immutable through this call. Returns the updated group so the roster's
+// badges refresh immediately.
+export function updateMemberRole(
+  groupId: string,
+  userId: string,
+  role: 'admin' | 'member',
+): Promise<Group> {
+  return apiClient.put<Group>(
+    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}/role`,
+    { role },
+  );
+}
+
+// POST /api/groups/{id}/leave — removes the caller from the group. If they
+// were its last member the group is deleted server-side; if they were the
+// owner, ownership passes to the earliest-joined remaining member.
+export function leaveGroup(groupId: string): Promise<{ left: boolean }> {
+  return apiClient.post<{ left: boolean }>(
+    `/api/groups/${encodeURIComponent(groupId)}/leave`,
+  );
 }

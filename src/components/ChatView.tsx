@@ -27,7 +27,6 @@ import {
   PaperClipIcon,
   Square2StackIcon,
   TrashIcon,
-  UserPlusIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -40,8 +39,9 @@ import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
-import { memberName, type Group } from '@/lib/groups';
+import { canManageGroup, memberName, type Group } from '@/lib/groups';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
+import { GroupContextMenu } from './GroupContextMenu';
 import { MessageContextMenu } from './MessageContextMenu';
 import { TypingIndicator } from './TypingIndicator';
 
@@ -443,6 +443,8 @@ export function ChatView({
   onTyping,
   onInviteMember,
   onOpenDetails,
+  onClearChat,
+  onExitGroup,
   onForward,
   onTogglePin,
   onToggleKeep,
@@ -470,10 +472,16 @@ export function ChatView({
   typingNames?: string[];
   /** Notify the room that we started/stopped composing (throttled here). */
   onTyping: (isTyping: boolean) => void;
-  /** Opens the invite dialog — rendered as a header action in group rooms. */
+  /** Opens the invite dialog — the group header menu's "Add member", shown
+   *  only when the signed-in member is the owner or an admin. */
   onInviteMember?: () => void;
-  /** Opens the group-details popup — makes the group header identity clickable. */
+  /** Opens the group-details popup — both the header menu's "Group info" and
+   *  clicking the group identity itself. */
   onOpenDetails?: () => void;
+  /** Wipes this device's local cache for the room — header menu's "Clear chat". */
+  onClearChat?: () => void;
+  /** Removes the signed-in user from the group — header menu's "Exit group". */
+  onExitGroup?: () => void;
   onForward: (message: ChatMessage) => void;
   onTogglePin: (message: ChatMessage) => void;
   onToggleKeep: (message: ChatMessage) => void;
@@ -485,6 +493,7 @@ export function ChatView({
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -502,6 +511,10 @@ export function ChatView({
     group
       ? group.members.find((m) => m.user_id === senderId)?.avatar_url
       : conversation?.peerAvatarUrl;
+  // Gates "Add member" in the header menu — owner/admin only, mirroring the
+  // backend's requireGroupAdmin check on that call.
+  const canManage =
+    isGroup && canManageGroup(group!.members.find((m) => m.user_id === myUserId)?.role);
 
   // Group typing line, WhatsApp-style: name one or two composers, then summarise.
   const groupTypingLabel =
@@ -786,15 +799,16 @@ export function ChatView({
                 {CONNECTION_LABEL[connectionStatus]}
               </span>
             )}
-            {isGroup && onInviteMember && (
-              <button
-                type="button"
-                aria-label="Invite to group"
-                title="Invite to group"
-                onClick={onInviteMember}
-                className="flex items-center justify-center rounded-full p-2 text-gray-500 dark:text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-700 dark:hover:bg-white/10">
-                <UserPlusIcon className="h-5 w-5" />
-              </button>
+            {isGroup && onOpenDetails && onClearChat && onExitGroup && (
+              <GroupContextMenu
+                isOpen={isGroupMenuOpen}
+                onOpenChange={setIsGroupMenuOpen}
+                canAddMember={canManage}
+                onAddMember={() => onInviteMember?.()}
+                onGroupInfo={onOpenDetails}
+                onClearChat={onClearChat}
+                onExitGroup={onExitGroup}
+              />
             )}
           </div>
         </header>

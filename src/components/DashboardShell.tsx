@@ -38,20 +38,23 @@ import {
 } from '@/lib/e2ee';
 import {
   acceptInvite as acceptInviteApi,
+  addGroupMember,
   createGroup as createGroupApi,
   declineInvite as declineInviteApi,
   fetchGroups,
   fetchInvites,
   groupRoomId,
-  inviteToGroup,
+  leaveGroup as leaveGroupApi,
   memberName,
   renameGroup,
+  updateMemberRole as updateMemberRoleApi,
   uploadGroupAvatar,
   type Group,
   type GroupInvite,
   type WrappedKeyInput,
 } from '@/lib/groups';
 import {
+  clearMessages,
   decodeMessageBody,
   deleteMessage,
   encodeMessageBody,
@@ -98,6 +101,7 @@ interface InboundFrame {
     | 'presence_update'
     | 'typing'
     | 'pin_message'
+    | 'unpin_message'
     | 'delete_message'
     | 'user_update'
     | 'invite_received'
@@ -231,6 +235,9 @@ export function DashboardShell({
   const [isGroupDetailsOpen, setIsGroupDetailsOpen] = useState(false);
   const [isSavingGroupName, setIsSavingGroupName] = useState(false);
   const [isUploadingGroupPhoto, setIsUploadingGroupPhoto] = useState(false);
+  // The member row currently being promoted/demoted — serialises role changes
+  // and disables the acting row's button while its request is in flight.
+  const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
   // Member IDs currently composing, per group — drives "X is typing…" in the
   // group header. The DM equivalent is the flat typingPeers set above.
   const [groupTyping, setGroupTyping] = useState<Record<string, ReadonlySet<string>>>({});
@@ -698,10 +705,15 @@ export function DashboardShell({
         return;
       }
 
-      // Pin broadcast: someone pinned a message for the whole room — mirror it.
-      if (frame.type === 'pin_message') {
+      // Pin/unpin broadcast: someone toggled a message's pinned state for the
+      // whole room (DM peer, or every group member) — mirror it here too.
+      if (frame.type === 'pin_message' || frame.type === 'unpin_message') {
         if (frame.chat_room_id && frame.message_id) {
-          const updated = setMessagePinned(frame.chat_room_id, frame.message_id, true);
+          const updated = setMessagePinned(
+            frame.chat_room_id,
+            frame.message_id,
+            frame.type === 'pin_message',
+          );
           setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
         }
         return;
@@ -1050,7 +1062,7 @@ export function DashboardShell({
         `/api/users/${target.userId}/key`,
       );
       const key = await wrapGroupKeyFor(entry.rawB64, resolved.public_key);
-      await inviteToGroup({ groupId: group.group_id, username: target.username, key });
+      await addGroupMember({ groupId: group.group_id, username: target.username, key });
       setIsInviteMemberOpen(false);
       gooeyToast(`Invite sent to ${target.displayName ?? target.username}`);
     } catch (err) {
@@ -1097,6 +1109,60 @@ export function DashboardShell({
       });
     } finally {
       setIsUploadingGroupPhoto(false);
+    }
+  }
+
+  // Promotes a member to admin, or demotes an admin back to member. The
+  // action button that triggers this is already gated to owner/admin viewers
+  // (see GroupDetailsDialog), and the backend enforces the same rule
+  // independently — this is UX polish, not the actual security boundary.
+  async function handleUpdateMemberRole(userId: string, role: 'admin' | 'member') {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group) return;
+    setUpdatingRoleUserId(userId);
+    try {
+      const updated = await updateMemberRoleApi(group.group_id, userId, role);
+      setGroups((prev) => prev.map((g) => (g.group_id === updated.group_id ? updated : g)));
+      gooeyToast(role === 'admin' ? 'Member promoted to admin' : 'Admin role removed');
+    } catch (err) {
+      gooeyToast('Could not update role', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setUpdatingRoleUserId(null);
+    }
+  }
+
+  // Wipes this device's local cache for the open room — group header menu's
+  // "Clear chat". Local only: it never touches server-side history, so a
+  // reconnect/history sync can still repopulate anything the backend still
+  // has (mirrors "Delete for me" on a single message).
+  function handleClearChat() {
+    if (!activeRoomId) return;
+    const room = activeRoomId;
+    const updated = clearMessages(room);
+    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
+    gooeyToast('Chat cleared');
+  }
+
+  // Removes the signed-in user from the open group — header menu's "Exit
+  // group". The local message cache is left alone (unlike Clear chat): if
+  // they're re-invited later there's no reason to have already thrown away
+  // history they'd otherwise still be able to read.
+  async function handleExitGroup() {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group) return;
+    try {
+      await leaveGroupApi(group.group_id);
+      setGroups((prev) => prev.filter((g) => g.group_id !== group.group_id));
+      groupKeyCache.current.delete(group.group_id);
+      setActiveGroupId(null);
+      setIsGroupDetailsOpen(false);
+      gooeyToast(`Left "${group.name}"`);
+    } catch (err) {
+      gooeyToast('Could not leave group', {
+        description: err instanceof Error ? err.message : undefined,
+      });
     }
   }
 
@@ -1321,14 +1387,24 @@ export function DashboardShell({
     const nextPinned = !message.pinned;
     const updated = setMessagePinned(room, message.id, nextPinned);
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
-    if (nextPinned) {
-      // Broadcast the pin to everyone in the room; local mirror is already set.
-      send({ type: 'pin_message', message_id: message.id, chat_room_id: room });
-      gooeyToast('Message pinned');
-    } else {
-      // Unpin has no broadcast frame defined — clear it locally only.
-      gooeyToast('Message unpinned');
+
+    // Broadcast the toggle to everyone else in the room — the DM peer, or
+    // every group member — so the pinned banner stays in sync for them too;
+    // our own local mirror above is already set.
+    const routing = activeGroup
+      ? { group_id: activeGroup.group_id }
+      : activeConversation
+        ? { receiver_id: activeConversation.peerId }
+        : null;
+    if (routing) {
+      send({
+        type: nextPinned ? 'pin_message' : 'unpin_message',
+        message_id: message.id,
+        chat_room_id: room,
+        ...routing,
+      });
     }
+    gooeyToast(nextPinned ? 'Message pinned' : 'Message unpinned');
   }
 
   function handleToggleKeep(message: ChatMessage) {
@@ -1549,6 +1625,8 @@ export function DashboardShell({
           }
           onInviteMember={() => setIsInviteMemberOpen(true)}
           onOpenDetails={() => setIsGroupDetailsOpen(true)}
+          onClearChat={handleClearChat}
+          onExitGroup={() => void handleExitGroup()}
           onForward={setForwardingMessage}
           onTogglePin={handleTogglePin}
           onToggleKeep={handleToggleKeep}
@@ -1652,6 +1730,7 @@ export function DashboardShell({
           currentUserId={user.user_id}
           isSavingName={isSavingGroupName}
           isUploadingPhoto={isUploadingGroupPhoto}
+          updatingRoleUserId={updatingRoleUserId}
           onRename={(name) => void handleRenameGroup(name)}
           onUploadPhoto={(file) => void handleUploadGroupPhoto(file)}
           onInviteMember={() => {
@@ -1659,6 +1738,7 @@ export function DashboardShell({
             setIsGroupDetailsOpen(false);
             setIsInviteMemberOpen(true);
           }}
+          onUpdateRole={(userId, role) => void handleUpdateMemberRole(userId, role)}
         />
       )}
 
