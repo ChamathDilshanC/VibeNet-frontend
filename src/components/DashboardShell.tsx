@@ -46,6 +46,7 @@ import {
   groupRoomId,
   leaveGroup as leaveGroupApi,
   memberName,
+  removeGroupMember as removeGroupMemberApi,
   renameGroup,
   updateMemberRole as updateMemberRoleApi,
   uploadGroupAvatar,
@@ -105,7 +106,8 @@ interface InboundFrame {
     | 'delete_message'
     | 'user_update'
     | 'invite_received'
-    | 'group_update';
+    | 'group_update'
+    | 'removed_from_group';
   message_id?: string;
   sender_id?: string;
   chat_room_id?: string;
@@ -238,6 +240,8 @@ export function DashboardShell({
   // The member row currently being promoted/demoted — serialises role changes
   // and disables the acting row's button while its request is in flight.
   const [updatingRoleUserId, setUpdatingRoleUserId] = useState<string | null>(null);
+  // The member row currently being removed — same serialisation as above.
+  const [removingMemberUserId, setRemovingMemberUserId] = useState<string | null>(null);
   // Member IDs currently composing, per group — drives "X is typing…" in the
   // group header. The DM equivalent is the flat typingPeers set above.
   const [groupTyping, setGroupTyping] = useState<Record<string, ReadonlySet<string>>>({});
@@ -744,6 +748,27 @@ export function DashboardShell({
         return;
       }
 
+      // An owner/admin removed us from a group: drop it locally and, if it
+      // was open, close the room. Sent as its own frame rather than riding on
+      // group_update — by the time that fans out to the remaining roster
+      // we're not in it anymore and would never otherwise learn we're gone.
+      if (frame.type === 'removed_from_group') {
+        const groupId = frame.group_id;
+        if (!groupId) return;
+        setGroups((prev) => prev.filter((g) => g.group_id !== groupId));
+        groupKeyCache.current.delete(groupId);
+        if (activeGroupId === groupId) {
+          setActiveGroupId(null);
+          setIsGroupDetailsOpen(false);
+        }
+        gooeyToast(
+          frame.group_name
+            ? `You were removed from "${frame.group_name}"`
+            : 'You were removed from a group',
+        );
+        return;
+      }
+
       // Profile update broadcast: a peer changed their real name / avatar. Patch
       // the cached conversation so the DM list, chat header, and bubbles update
       // live — no reload needed. Only touches peers we actually have a chat with.
@@ -878,7 +903,17 @@ export function DashboardShell({
         }
       })();
     },
-    [conversations, decryptIncoming, keyState.status, user, groups, getGroupKey, refreshGroups, refreshInvites],
+    [
+      conversations,
+      decryptIncoming,
+      keyState.status,
+      user,
+      groups,
+      getGroupKey,
+      refreshGroups,
+      refreshInvites,
+      activeGroupId,
+    ],
   );
 
   // Replay anything that arrived while keys were still being set up.
@@ -1143,6 +1178,36 @@ export function DashboardShell({
       });
     } finally {
       setUpdatingRoleUserId(null);
+    }
+  }
+
+  // Removes another member from the group. The button that triggers this is
+  // already gated (owner/admin only, and admin-vs-admin is owner-only — see
+  // GroupDetailsDialog); the backend enforces the same rule independently.
+  // The removed user learns about it via their own "removed_from_group" frame
+  // (handled in handleIncoming), not this call — this only updates our side.
+  async function handleRemoveMember(userId: string) {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group || !user) return;
+    // Captured before the call: the target won't be in the roster the API
+    // hands back once removal succeeds.
+    const target = group.members.find((m) => m.user_id === userId);
+    const targetName = target ? target.display_name.trim() || target.username : 'a member';
+
+    setRemovingMemberUserId(userId);
+    try {
+      const updated = await removeGroupMemberApi(group.group_id, userId);
+      setGroups((prev) => prev.map((g) => (g.group_id === updated.group_id ? updated : g)));
+      gooeyToast(`Removed ${targetName} from the group`);
+
+      const actorName = user.display_name || user.username;
+      void sendGroupSystemMessage(updated, `${actorName} removed ${targetName} from the group`);
+    } catch (err) {
+      gooeyToast('Could not remove member', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setRemovingMemberUserId(null);
     }
   }
 
@@ -1798,6 +1863,7 @@ export function DashboardShell({
           isSavingName={isSavingGroupName}
           isUploadingPhoto={isUploadingGroupPhoto}
           updatingRoleUserId={updatingRoleUserId}
+          removingMemberUserId={removingMemberUserId}
           onRename={(name) => void handleRenameGroup(name)}
           onUploadPhoto={(file) => void handleUploadGroupPhoto(file)}
           onInviteMember={() => {
@@ -1806,6 +1872,7 @@ export function DashboardShell({
             setIsInviteMemberOpen(true);
           }}
           onUpdateRole={(userId, role) => void handleUpdateMemberRole(userId, role)}
+          onRemoveMember={(userId) => void handleRemoveMember(userId)}
         />
       )}
 

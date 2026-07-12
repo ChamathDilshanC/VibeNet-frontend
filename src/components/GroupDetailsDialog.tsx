@@ -52,10 +52,12 @@ export function GroupDetailsDialog({
   isSavingName,
   isUploadingPhoto,
   updatingRoleUserId,
+  removingMemberUserId,
   onRename,
   onUploadPhoto,
   onInviteMember,
   onUpdateRole,
+  onRemoveMember,
 }: {
   isOpen: boolean;
   onOpenChange: (isOpen: boolean) => void;
@@ -67,12 +69,16 @@ export function GroupDetailsDialog({
   isUploadingPhoto: boolean;
   /** The member row currently being promoted/demoted — disables its action. */
   updatingRoleUserId: string | null;
+  /** The member row currently being removed — disables its action. */
+  removingMemberUserId: string | null;
   onRename: (name: string) => void;
   onUploadPhoto: (file: File) => void;
   /** Jumps to the existing invite dialog. Owner/admin only — see canManageGroup. */
   onInviteMember: () => void;
   /** Promotes a member to admin or demotes an admin back to member. */
   onUpdateRole: (userId: string, role: 'admin' | 'member') => void;
+  /** Removes a member from the group entirely. */
+  onRemoveMember: (userId: string) => void;
 }) {
   // Local draft of the name; null means "not edited yet — mirror the group".
   // Kept as a draft (not synced via effect) so a live group_update refetch
@@ -195,6 +201,15 @@ export function GroupDetailsDialog({
                       canManage && member.role !== 'owner' && member.user_id !== currentUserId;
                     const isUpdating = updatingRoleUserId === member.user_id;
 
+                    // Removing is a step further than demoting: any owner/admin
+                    // may remove a regular member, but an admin can't remove a
+                    // fellow admin — only the owner can. Mirrors the backend's
+                    // RemoveGroupMember check exactly.
+                    const canRemoveMember =
+                      canActOnMember && (member.role !== 'admin' || myRole === 'owner');
+                    const isRemoving = removingMemberUserId === member.user_id;
+                    const rowBusy = updatingRoleUserId !== null || removingMemberUserId !== null;
+
                     return (
                       <ListItem
                         key={member.user_id}
@@ -226,13 +241,23 @@ export function GroupDetailsDialog({
                                 variant="ghost"
                                 size="sm"
                                 isLoading={isUpdating}
-                                isDisabled={updatingRoleUserId !== null}
+                                isDisabled={rowBusy}
                                 onClick={() =>
                                   onUpdateRole(
                                     member.user_id,
                                     member.role === 'admin' ? 'member' : 'admin',
                                   )
                                 }
+                              />
+                            )}
+                            {canRemoveMember && (
+                              <Button
+                                label={isRemoving ? 'Removing…' : 'Remove'}
+                                variant="destructive"
+                                size="sm"
+                                isLoading={isRemoving}
+                                isDisabled={rowBusy}
+                                onClick={() => onRemoveMember(member.user_id)}
                               />
                             )}
                           </div>

@@ -201,3 +201,12 @@ export function leaveGroup(groupId: string): Promise<{ left: boolean }> {
     `/api/groups/${encodeURIComponent(groupId)}/leave`,
   );
 }
+
+// DELETE /api/groups/{id}/members/{userId} — removes another member. Owner or
+// admin may remove a regular member; only the owner may remove an admin.
+// Returns the updated group so the roster refreshes immediately.
+export function removeGroupMember(groupId: string, userId: string): Promise<Group> {
+  return apiClient.delete<Group>(
+    `/api/groups/${encodeURIComponent(groupId)}/members/${encodeURIComponent(userId)}`,
+  );
+}
