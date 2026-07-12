@@ -1562,7 +1562,10 @@ export function DashboardShell({
 
       {user && (
         <NewChatDialog
-          key={newChatSession}
+          // Session keys force a remount-with-fresh-state per open. Namespaced
+          // (not the bare counter) because these dialogs are siblings: two bare
+          // counters both starting at 0 collide as duplicate React keys.
+          key={`new-chat-${newChatSession}`}
           isOpen={isNewChatOpen}
           onOpenChange={setIsNewChatOpen}
           currentUserId={user.user_id}
@@ -1572,7 +1575,7 @@ export function DashboardShell({
 
       {user && (
         <CreateGroupDialog
-          key={createGroupSession}
+          key={`create-group-${createGroupSession}`}
           isOpen={isCreateGroupOpen}
           onOpenChange={setIsCreateGroupOpen}
           currentUserId={user.user_id}
@@ -1584,7 +1587,7 @@ export function DashboardShell({
       {user && (
         <InviteMemberDialog
           // Remount per group so a previous search doesn't leak across rooms.
-          key={activeGroupId ?? 'no-group'}
+          key={`invite-member-${activeGroupId ?? 'none'}`}
           isOpen={isInviteMemberOpen}
           onOpenChange={setIsInviteMemberOpen}
           group={activeGroup}
