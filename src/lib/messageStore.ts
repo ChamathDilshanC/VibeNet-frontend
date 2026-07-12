@@ -49,6 +49,12 @@ export interface ChatMessage {
   /** True when this message was forwarded from another conversation. Renders a
    *  "Forwarded" label at the top of the bubble, WhatsApp/Messenger-style. */
   isForwarded?: boolean;
+  /** True for a group activity notice ("X made Y an admin", "X joined the
+   *  group") rather than a message someone typed. Sent through the same
+   *  encrypted pipeline as a normal message (so it's persisted and visible to
+   *  every member) but rendered as a centered system pill instead of a bubble
+   *  — see ChatView. senderId is still whoever's client generated it. */
+  isSystem?: boolean;
 }
 
 // ── Encrypted message body envelope ────────────────────────────────────────
@@ -62,6 +68,7 @@ interface MessageEnvelope {
   text: string;
   replyTo?: ReplyPreview;
   isForwarded?: boolean;
+  isSystem?: boolean;
 }
 
 // Metadata that rides inside the encrypted envelope alongside the text. Carried
@@ -72,6 +79,7 @@ interface MessageEnvelope {
 export interface MessageMeta {
   replyTo?: ReplyPreview;
   isForwarded?: boolean;
+  isSystem?: boolean;
 }
 
 // encodeMessageBody produces the string handed to encryptText — a JSON envelope
@@ -81,6 +89,7 @@ export function encodeMessageBody(text: string, meta: MessageMeta = {}): string 
   const envelope: MessageEnvelope = { v: 1, text };
   if (meta.replyTo) envelope.replyTo = meta.replyTo;
   if (meta.isForwarded) envelope.isForwarded = true;
+  if (meta.isSystem) envelope.isSystem = true;
   return JSON.stringify(envelope);
 }
 
@@ -90,11 +99,16 @@ export function encodeMessageBody(text: string, meta: MessageMeta = {}): string 
 // messages both render correctly.
 export function decodeMessageBody(
   raw: string,
-): { text: string; replyTo?: ReplyPreview; isForwarded?: boolean } {
+): { text: string; replyTo?: ReplyPreview; isForwarded?: boolean; isSystem?: boolean } {
   try {
     const parsed = JSON.parse(raw) as Partial<MessageEnvelope>;
     if (parsed && parsed.v === 1 && typeof parsed.text === 'string') {
-      return { text: parsed.text, replyTo: parsed.replyTo, isForwarded: parsed.isForwarded };
+      return {
+        text: parsed.text,
+        replyTo: parsed.replyTo,
+        isForwarded: parsed.isForwarded,
+        isSystem: parsed.isSystem,
+      };
     }
   } catch {
     // Not JSON — a legacy plain-text body from before the envelope existed.
@@ -147,6 +161,7 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
             pinned: message.pinned ?? prev.pinned,
             kept: message.kept ?? prev.kept,
             isForwarded: message.isForwarded ?? prev.isForwarded,
+            isSystem: message.isSystem ?? prev.isSystem,
             replyTo: message.replyTo ?? prev.replyTo,
           }
         : message,

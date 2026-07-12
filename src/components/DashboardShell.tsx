@@ -506,7 +506,7 @@ export function DashboardShell({
           for (const m of pending) {
             try {
               const plaintext = await decryptText(key, m.ciphertext, m.nonce);
-              const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+              const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
               ok.push({
                 id: m.message_id,
                 senderId: m.sender_id,
@@ -514,6 +514,7 @@ export function DashboardShell({
                 timestamp: m.timestamp,
                 replyTo,
                 isForwarded,
+                isSystem,
               });
             } catch {
               // Expected for history predating a key rotation/loss — summarised
@@ -791,13 +792,14 @@ export function DashboardShell({
           if (!entry) return;
           try {
             const plaintext = await decryptText(entry.key, ciphertext, nonce);
-            const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+            const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
             recordMessage(chatRoomId, {
               id: messageId,
               senderId,
               text,
               timestamp: timestamp ?? Date.now(),
               isForwarded: isForwarded ?? frameForwarded,
+              isSystem,
               replyTo,
             });
             // A message from them supersedes their typing state — clear it now
@@ -1118,12 +1120,23 @@ export function DashboardShell({
   // independently — this is UX polish, not the actual security boundary.
   async function handleUpdateMemberRole(userId: string, role: 'admin' | 'member') {
     const group = groups.find((g) => g.group_id === activeGroupId);
-    if (!group) return;
+    if (!group || !user) return;
     setUpdatingRoleUserId(userId);
     try {
       const updated = await updateMemberRoleApi(group.group_id, userId, role);
       setGroups((prev) => prev.map((g) => (g.group_id === updated.group_id ? updated : g)));
       gooeyToast(role === 'admin' ? 'Member promoted to admin' : 'Admin role removed');
+
+      // Activity log entry so every member can see who changed what, and when.
+      const actorName = user.display_name || user.username;
+      const target = updated.members.find((m) => m.user_id === userId);
+      const targetName = target ? target.display_name.trim() || target.username : 'a member';
+      void sendGroupSystemMessage(
+        updated,
+        role === 'admin'
+          ? `${actorName} made ${targetName} an admin`
+          : `${actorName} removed ${targetName} as admin`,
+      );
     } catch (err) {
       gooeyToast('Could not update role', {
         description: err instanceof Error ? err.message : undefined,
@@ -1151,8 +1164,14 @@ export function DashboardShell({
   // history they'd otherwise still be able to read.
   async function handleExitGroup() {
     const group = groups.find((g) => g.group_id === activeGroupId);
-    if (!group) return;
+    if (!group || !user) return;
     try {
+      // Send the activity notice FIRST, while still a member — the backend
+      // rejects group frames from non-members, so this has to precede the
+      // actual leave call rather than follow it.
+      const leaverName = user.display_name || user.username;
+      await sendGroupSystemMessage(group, `${leaverName} left the group`);
+
       await leaveGroupApi(group.group_id);
       setGroups((prev) => prev.filter((g) => g.group_id !== group.group_id));
       groupKeyCache.current.delete(group.group_id);
@@ -1176,6 +1195,7 @@ export function DashboardShell({
       setGroups((prev) => [group, ...prev.filter((g) => g.group_id !== group.group_id)]);
       openGroup(group.group_id);
       gooeyToast(`Joined "${group.name}"`);
+      if (user) void sendGroupSystemMessage(group, `${user.display_name || user.username} joined the group`);
     } catch (err) {
       gooeyToast('Could not accept invite', {
         description: err instanceof Error ? err.message : undefined,
@@ -1222,7 +1242,7 @@ export function DashboardShell({
         for (const m of pending) {
           try {
             const plaintext = await decryptText(entry.key, m.ciphertext, m.nonce);
-            const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+            const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
             decrypted.push({
               id: m.message_id,
               senderId: m.sender_id,
@@ -1230,6 +1250,7 @@ export function DashboardShell({
               timestamp: m.timestamp,
               replyTo,
               isForwarded,
+              isSystem,
             });
           } catch {
             // Encrypted under a key generation this device can't recover — skip.
@@ -1322,6 +1343,52 @@ export function DashboardShell({
       setIsSending(false);
     }
   }
+
+  // Sends a group activity notice ("X made Y an admin", "X joined the group")
+  // through the exact same encrypted pipeline as a normal message, so it's
+  // persisted to history and reaches every member — ChatView renders it as a
+  // centered system pill instead of a bubble (see ChatMessage.isSystem).
+  // Fire-and-forget: the membership/role change already succeeded by the time
+  // this is called, so a failure here shouldn't roll anything back — it just
+  // means the log entry doesn't show up.
+  const sendGroupSystemMessage = useCallback(
+    async (group: Group, text: string) => {
+      if (!user) return;
+      try {
+        const entry = await getGroupKey(group);
+        if (!entry) return;
+
+        const { ciphertext, nonce } = await encryptText(
+          entry.key,
+          encodeMessageBody(text, { isSystem: true }),
+        );
+        const messageId = crypto.randomUUID();
+        const timestamp = Date.now();
+        const roomId = groupRoomId(group.group_id);
+
+        send({
+          type: 'message',
+          message_id: messageId,
+          group_id: group.group_id,
+          chat_room_id: roomId,
+          ciphertext,
+          nonce,
+          timestamp,
+        });
+        recordMessage(roomId, {
+          id: messageId,
+          senderId: user.user_id,
+          text,
+          timestamp,
+          status: 'sent',
+          isSystem: true,
+        });
+      } catch {
+        // Best-effort notice — nothing to roll back on failure.
+      }
+    },
+    [user, getGroupKey, send],
+  );
 
   async function handleSend(text: string, replyTo?: ReplyPreview) {
     if (!user) return;

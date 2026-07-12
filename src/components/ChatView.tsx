@@ -70,6 +70,10 @@ const STATUS_LABEL: Record<MessageStatus, string> = {
 const TYPING_HEARTBEAT_MS = 2000;
 // After this much keystroke silence, tell the peer we've stopped typing.
 const TYPING_IDLE_MS = 3000;
+// Cap on the composer's auto-grow height (px, roughly 6-7 lines) — beyond
+// this a long paste (a code snippet, say) scrolls inside the box instead of
+// pushing the whole composer off-screen.
+const MAX_COMPOSER_HEIGHT_PX = 160;
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {
@@ -495,7 +499,7 @@ export function ChatView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
 
   // ── DM/group resolution ─────────────────────────────────────────────────
   // Everything below renders from these instead of touching conversation/group
@@ -611,6 +615,9 @@ export function ChatView({
     onSend(text, replyTo);
     setDraft('');
     setReplyingTo(null);
+    // Clearing `draft` doesn't shrink the textarea's inline height style back
+    // down on its own — reset it so the composer collapses to one line again.
+    if (inputRef.current) inputRef.current.style.height = 'auto';
   }
 
   function exitSelectMode() {
@@ -861,22 +868,36 @@ export function ChatView({
                   </div>
                 )}
 
-                <MessageRow
-                  message={message}
-                  isMine={isMine}
-                  senderName={senderNameOf(message.senderId)}
-                  senderAvatarUrl={senderAvatarOf(message.senderId)}
-                  readReceiptName={conversation ? peerName(conversation) : undefined}
-                  readReceiptAvatarUrl={conversation?.peerAvatarUrl}
-                  actions={actions}
-                  menuOpen={openMenuId === message.id}
-                  onMenuOpenChange={(open) => setOpenMenuId(open ? message.id : null)}
-                  selectMode={selectMode}
-                  isSelected={selectedIds.has(message.id)}
-                  onToggleSelect={toggleSelect}
-                  // Read receipts are DM-only; group rooms have no read frames.
-                  showReadReceipt={!isGroup && isMine && message.id === lastReadMessageId}
-                />
+                {message.isSystem ? (
+                  // Group activity notice ("X made Y an admin") — a centered,
+                  // non-interactive pill rather than a bubble: no sender
+                  // identity, no context menu, nothing to reply to or select.
+                  <div className="flex justify-center py-1">
+                    <span className="max-w-[85%] rounded-full bg-black/[0.04] px-3 py-1 text-center text-xs text-gray-500 dark:bg-white/[0.06] dark:text-gray-400">
+                      {message.text}
+                      <span className="ml-1.5 text-gray-400 dark:text-gray-500">
+                        · {formatTime(message.timestamp)}
+                      </span>
+                    </span>
+                  </div>
+                ) : (
+                  <MessageRow
+                    message={message}
+                    isMine={isMine}
+                    senderName={senderNameOf(message.senderId)}
+                    senderAvatarUrl={senderAvatarOf(message.senderId)}
+                    readReceiptName={conversation ? peerName(conversation) : undefined}
+                    readReceiptAvatarUrl={conversation?.peerAvatarUrl}
+                    actions={actions}
+                    menuOpen={openMenuId === message.id}
+                    onMenuOpenChange={(open) => setOpenMenuId(open ? message.id : null)}
+                    selectMode={selectMode}
+                    isSelected={selectedIds.has(message.id)}
+                    onToggleSelect={toggleSelect}
+                    // Read receipts are DM-only; group rooms have no read frames.
+                    showReadReceipt={!isGroup && isMine && message.id === lastReadMessageId}
+                  />
+                )}
               </Fragment>
             );
           })}
@@ -939,7 +960,13 @@ export function ChatView({
             )}
 
             <form
-              className="flex items-center gap-1.5 rounded-full bg-white dark:bg-gray-900 p-1.5 pl-3 shadow-[0_8px_30px_rgba(37,63,132,0.12)] ring-1 ring-black/[0.04]"
+              className={[
+                'flex items-end gap-1.5 bg-white dark:bg-gray-900 p-1.5 pl-3 shadow-[0_8px_30px_rgba(37,63,132,0.12)] ring-1 ring-black/[0.04]',
+                // A tall, wrapped/pasted draft (a code block, say) reads oddly
+                // inside a fully-pill-shaped container — ease the rounding off
+                // once it grows past one line, same as WhatsApp/Slack/Telegram.
+                draft.includes('\n') ? 'rounded-3xl' : 'rounded-full',
+              ].join(' ')}
               onSubmit={(event) => {
                 event.preventDefault();
                 handleSend();
@@ -951,9 +978,13 @@ export function ChatView({
                 <FaceSmileIcon className="h-6 w-6" />
               </button>
 
-              <input
+              {/* A <textarea>, not an <input> — a single-line input silently
+                  strips newlines, which is exactly why pasting anything
+                  multi-line (a code snippet, a list) used to collapse onto one
+                  line. Enter sends; Shift+Enter inserts a newline. */}
+              <textarea
                 ref={inputRef}
-                type="text"
+                rows={1}
                 aria-label="Message"
                 placeholder={activeReply ? 'Type your reply…' : `Message ${title}`}
                 value={draft}
@@ -962,9 +993,22 @@ export function ChatView({
                   setDraft(value);
                   if (value.trim()) notifyTyping();
                   else stopTyping();
+
+                  // Auto-grow to fit the content, capped so a huge paste
+                  // scrolls inside the box instead of swallowing the screen.
+                  const el = event.target;
+                  el.style.height = 'auto';
+                  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT_PX)}px`;
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault();
+                    handleSend();
+                  }
                 }}
                 onBlur={stopTyping}
-                className="min-w-0 flex-1 bg-transparent px-1 text-sm text-gray-900 dark:text-white outline-none placeholder:text-gray-400"
+                className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-gray-900 dark:text-white outline-none placeholder:text-gray-400"
+                style={{ maxHeight: MAX_COMPOSER_HEIGHT_PX }}
               />
 
               <button
