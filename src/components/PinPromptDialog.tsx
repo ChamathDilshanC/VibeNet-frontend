@@ -93,7 +93,7 @@ export function PinPromptDialog({
             role="dialog"
             aria-modal="true"
             aria-label={title}
-            className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/60 bg-white/80 p-7 shadow-2xl shadow-slate-900/20 backdrop-blur-xl"
+            className="relative w-full max-w-sm overflow-hidden rounded-3xl border border-white/60 dark:border-gray-700/60 bg-white/80 dark:bg-gray-900/80 p-7 shadow-2xl shadow-slate-900/20 backdrop-blur-xl"
             initial={{ opacity: 0, scale: 0.92, y: 12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.95, y: 8 }}
@@ -105,7 +105,7 @@ export function PinPromptDialog({
                   className="absolute -inset-1.5 rounded-full opacity-70 blur-md"
                   style={{ background: 'var(--vibe-gradient)' }}
                 />
-                <span className="relative block rounded-full ring-4 ring-white/80">
+                <span className="relative block rounded-full ring-4 ring-white/80 dark:ring-gray-800/80">
                   <Avatar src={resolveAvatarUrl(avatarUrl)} name={avatarName} size={72} alt={avatarName} />
                 </span>
                 <span className="absolute -bottom-1 -right-1 flex h-7 w-7 items-center justify-center rounded-full bg-[color:var(--vibe-blue)] text-white ring-2 ring-white">
@@ -114,8 +114,8 @@ export function PinPromptDialog({
               </div>
 
               <div className="flex flex-col gap-1">
-                <h2 className="text-lg font-semibold text-slate-900">{title}</h2>
-                <p className="text-sm text-slate-500">
+                <h2 className="text-lg font-semibold text-slate-900 dark:text-white">{title}</h2>
+                <p className="text-sm text-slate-500 dark:text-gray-400">
                   {subtitle ?? 'Enter your 6-digit chat PIN to unlock your conversations.'}
                 </p>
               </div>

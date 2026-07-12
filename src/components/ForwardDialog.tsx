@@ -62,7 +62,7 @@ export function ForwardDialog({
                 <Text type="supporting" color="secondary">
                   Forwarding
                 </Text>
-                <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm text-gray-700">
+                <p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm text-gray-700 dark:text-gray-200">
                   {messagePreview}
                 </p>
               </div>

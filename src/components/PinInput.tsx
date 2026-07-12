@@ -103,12 +103,13 @@ export function PinInput({
           onFocus={(e) => e.target.select()}
           className={[
             'h-12 w-10 rounded-xl border text-center text-lg font-semibold sm:h-14 sm:w-12 sm:text-xl',
-            'bg-white/80 text-slate-900 shadow-sm outline-none transition-all duration-150',
+            'bg-white/80 text-gray-900 shadow-sm outline-none transition-colors duration-300 ease-in-out',
+            'dark:bg-gray-950/60 dark:text-white',
             'focus:border-[color:var(--vibe-blue)] focus:ring-2 focus:ring-[color:var(--vibe-blue)]/40',
             'disabled:cursor-not-allowed disabled:opacity-60',
             hasError
-              ? 'border-red-400 ring-2 ring-red-400/30'
-              : 'border-slate-200',
+              ? 'border-red-400 ring-2 ring-red-400/30 dark:border-red-500'
+              : 'border-gray-200 dark:border-gray-700',
           ].join(' ')}
         />
       ))}

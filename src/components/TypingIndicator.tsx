@@ -15,7 +15,7 @@ export function TypingIndicator({ label }: { label?: string }) {
     <div
       role="status"
       aria-label={label ? `${label} is typing` : 'Typing'}
-      className="inline-flex items-center gap-1.5 rounded-full border border-white/60 bg-white/70 px-3 py-2 shadow-[0_4px_16px_rgba(37,63,132,0.10)] backdrop-blur-md">
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/60 dark:border-gray-700/60 bg-white/70 dark:bg-gray-900/70 px-3 py-2 shadow-[0_4px_16px_rgba(37,63,132,0.10)] backdrop-blur-md">
       {Array.from({ length: DOT_COUNT }).map((_, i) => (
         <motion.span
           key={i}

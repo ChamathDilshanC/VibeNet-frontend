@@ -13,6 +13,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "goey-toast/styles.css";
 import { Footer } from "@/components/Footer";
+import { ThemeProvider } from "@/components/ThemeProvider";
 import { Toaster } from "@/components/Toaster";
 
 export const metadata: Metadata = {
@@ -27,15 +28,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
+    // suppressHydrationWarning: next-themes writes the theme class onto <html> from an
+    // inline script before React hydrates, so the server markup deliberately differs.
     <html
       lang="en"
       data-astryx-theme="neutral"
       className="h-full antialiased"
+      suppressHydrationWarning
     >
-      <body className="min-h-full flex flex-col">
-        {children}
-        <Footer />
-        <Toaster />
+      <body className="min-h-full flex flex-col bg-white text-gray-900 transition-colors duration-300 ease-in-out dark:bg-gray-950 dark:text-gray-100">
+        <ThemeProvider>
+          {children}
+          <Footer />
+          <Toaster />
+        </ThemeProvider>
       </body>
     </html>
   );

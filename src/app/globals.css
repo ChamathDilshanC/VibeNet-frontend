@@ -16,6 +16,29 @@
 @import "@astryxdesign/core/astryx.css";
 @import "@astryxdesign/theme-neutral/theme.css";
 
+/*
+ * Dark mode, in two halves.
+ *
+ * 1. Tailwind v4 has no JS config and no `darkMode: 'class'` option — the variant is
+ *    declared here instead. This points `dark:` at the .dark class that next-themes
+ *    writes onto <html>.
+ *
+ * 2. Astryx's tokens are declared with CSS light-dark() — e.g.
+ *    `--color-text-primary: light-dark(#171717, #fafafa)` — so they already hold both
+ *    values and resolve against the inherited `color-scheme`. Flipping color-scheme is
+ *    therefore all it takes to turn the ENTIRE design system dark: SideNav, TextInput,
+ *    Card, Switch, List and the rest follow with no per-component overrides. It also
+ *    fixes native chrome (scrollbars, form controls, autofill) for free.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  color-scheme: light;
+}
+.dark {
+  color-scheme: dark;
+}
+
 /* Let the app shell fill the viewport so the landing page can center itself. */
 html,
 body {
@@ -56,13 +79,27 @@ body {
   );
 }
 
-/* Ambient brand glow — keeps the center light for readable text. */
+/*
+ * Ambient brand glow. Light mode is deliberately restrained — the old tints were
+ * strong enough to read as a grey wash over what should be crisp white, so they're
+ * dialled back and sit on pure #ffffff. Dark mode keeps the same three lights at lower
+ * alpha over a deep slate.
+ */
 body {
   background:
-    radial-gradient(1100px 620px at 10% -8%, rgba(56, 181, 255, 0.18), transparent 60%),
-    radial-gradient(1000px 680px at 110% 8%, rgba(126, 211, 33, 0.16), transparent 55%),
-    radial-gradient(900px 640px at 55% 118%, rgba(56, 181, 255, 0.10), transparent 60%),
+    radial-gradient(1100px 620px at 10% -8%, rgba(56, 181, 255, 0.07), transparent 60%),
+    radial-gradient(1000px 680px at 110% 8%, rgba(126, 211, 33, 0.05), transparent 55%),
+    radial-gradient(900px 640px at 55% 118%, rgba(56, 181, 255, 0.05), transparent 60%),
     #ffffff;
+  background-attachment: fixed;
+}
+
+.dark body {
+  background:
+    radial-gradient(1100px 620px at 10% -8%, rgba(56, 181, 255, 0.10), transparent 60%),
+    radial-gradient(1000px 680px at 110% 8%, rgba(126, 211, 33, 0.06), transparent 55%),
+    radial-gradient(900px 640px at 55% 118%, rgba(56, 181, 255, 0.07), transparent 60%),
+    #030712; /* gray-950 */
   background-attachment: fixed;
 }
 
@@ -70,6 +107,45 @@ body {
 .astryx-layout,
 .astryx-layout-content {
   background: transparent;
+}
+
+/*
+ * Smooth cross-fade on theme change for the design-system chrome (app shell, side nav,
+ * cards, inputs, headers). These components paint from Astryx tokens rather than
+ * Tailwind classes, so `dark:` utilities can't reach them — the transition is applied
+ * here instead, matching the duration-300 ease-in-out used on the Tailwind surfaces.
+ *
+ * Scoped to colour properties only: a blanket `transition: all` would also animate
+ * layout and transform, which would make the resizable side-nav handle lag the cursor.
+ */
+.astryx-appshell,
+.astryx-layout,
+.astryx-layout-content,
+.astryx-layout-panel,
+.astryx-sidenav,
+.astryx-card,
+.astryx-input,
+.astryx-toolbar,
+body {
+  transition:
+    background-color 0.3s ease-in-out,
+    border-color 0.3s ease-in-out,
+    color 0.3s ease-in-out;
+}
+
+/* Users who ask for less motion get the instant swap. */
+@media (prefers-reduced-motion: reduce) {
+  .astryx-appshell,
+  .astryx-layout,
+  .astryx-layout-content,
+  .astryx-layout-panel,
+  .astryx-sidenav,
+  .astryx-card,
+  .astryx-input,
+  .astryx-toolbar,
+  body {
+    transition: none;
+  }
 }
 
 /* Brand wordmark in the hero. Size is controlled by Tailwind on the <img>. */
@@ -130,6 +206,19 @@ body {
     linear-gradient(rgba(56, 181, 255, 0.06), rgba(56, 181, 255, 0.06)) padding-box,
     var(--vibe-gradient) border-box;
 }
+/* The white padding-box fill has to become dark too, or the gradient border frames a
+   white slab on a dark page. */
+.dark .vibe-cta .astryx-button[data-variant="secondary"] {
+  background:
+    linear-gradient(#111827, #111827) padding-box,
+    var(--vibe-gradient) border-box;
+  color: #7dd3fc;
+}
+.dark .vibe-cta .astryx-button[data-variant="secondary"]:hover {
+  background:
+    linear-gradient(rgba(56, 181, 255, 0.14), rgba(56, 181, 255, 0.14)) padding-box,
+    var(--vibe-gradient) border-box;
+}
 
 /* ─── Auth pages (login / register) ─────────────────────────────────────── */
 
@@ -161,6 +250,14 @@ body {
   background: #f8fafc;
   border-color: #22c9e6;
 }
+.dark .vibe-google-btn {
+  background: #111827; /* gray-900 */
+  color: #f3f4f6;
+}
+.dark .vibe-google-btn:hover {
+  background: #1f2937; /* gray-800 */
+  border-color: #22c9e6;
+}
 .vibe-google-btn__icon {
   flex-shrink: 0;
 }
@@ -170,6 +267,9 @@ body {
   color: #0284c7;
   font-weight: 600;
   text-decoration: none;
+}
+.dark .vibe-link {
+  color: #38bdf8; /* lighter for contrast on dark */
 }
 .vibe-link:hover {
   text-decoration: underline;
@@ -219,6 +319,28 @@ body {
   background:
     radial-gradient(600px 200px at 50% 0%, rgba(56, 181, 255, 0.06), transparent 70%),
     rgba(255, 255, 255, 0.4);
+  transition: background 0.3s ease-in-out, border-color 0.3s ease-in-out;
+}
+.dark .vibe-empty {
+  background:
+    radial-gradient(600px 200px at 50% 0%, rgba(56, 181, 255, 0.08), transparent 70%),
+    rgba(17, 24, 39, 0.4);
+}
+
+/* ─── Settings ───────────────────────────────────────────────────────────── */
+
+/*
+ * Layout only. Every colour in the settings panel is now a Tailwind `dark:` pair on the
+ * element itself, and the Astryx components inside follow `color-scheme` — so the
+ * hand-authored dark token layer that used to live here is gone.
+ */
+.vibe-settings {
+  /* Fills the dashboard's content pane (it is rendered inside AppShell, not on a route
+   * of its own). Scrolling belongs to the content column inside, not here — otherwise
+   * the nav rail would scroll away with it. */
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
 }
 
 /* Global footer. */

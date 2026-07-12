@@ -152,7 +152,7 @@ function ForwardedTag({ tone }: { tone: 'sender' | 'receiver' }) {
   // Muted against whichever bubble it sits on: a translucent white on the blue
   // sender bubble, grey-500 on the light receiver bubble. mb-1.5 gives it clear
   // air above the username/text so it reads as a header, not part of the body.
-  const color = tone === 'sender' ? 'text-white/75' : 'text-gray-500';
+  const color = tone === 'sender' ? 'text-white/75' : 'text-gray-500 dark:text-gray-400';
   return (
     <span className={`mb-1.5 flex items-center gap-1 text-xs italic ${color}`}>
       <ArrowUturnRightIcon className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
@@ -172,13 +172,15 @@ function ReplyQuote({ replyTo, tone }: { replyTo: ReplyPreview; tone: 'sender' |
     <div
       className={[
         'mb-1.5 overflow-hidden rounded-lg border-l-4 py-1 pl-2 pr-2.5',
-        isSender ? 'border-white/70 bg-white/10' : 'border-[var(--vibe-blue)] bg-black/5',
+        isSender
+          ? 'border-white/70 bg-white/10'
+          : 'border-[var(--vibe-blue)] bg-black/5 dark:bg-white/10',
       ].join(' ')}>
       <span
         className={`block text-xs font-semibold ${isSender ? 'text-white' : 'text-[var(--vibe-blue)]'}`}>
         {replyTo.senderName}
       </span>
-      <span className={`block truncate text-xs ${isSender ? 'text-white/75' : 'text-gray-500'}`}>
+      <span className={`block truncate text-xs ${isSender ? 'text-white/75' : 'text-gray-500 dark:text-gray-400'}`}>
         {replyTo.textPreview}
       </span>
     </div>
@@ -298,7 +300,7 @@ function MessageRow({
       ].join(' ')}>
       {selectMode && (
         <SelectMark
-          className={`h-6 w-6 shrink-0 ${isSelected ? 'text-[var(--vibe-blue)]' : 'text-gray-400'}`}
+          className={`h-6 w-6 shrink-0 ${isSelected ? 'text-[var(--vibe-blue)]' : 'text-gray-400 dark:text-gray-500'}`}
           aria-hidden="true"
         />
       )}
@@ -379,22 +381,22 @@ function MessageRow({
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
           <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
-          <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
+          <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
               {peerName(conversation)}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700">
+            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">
               {message.text}
             </p>
-            <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-400">
+            <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-400 dark:text-gray-500">
               {message.kept && (
-                <BookmarkSolidIcon className="h-3 w-3 text-gray-400" aria-label="Kept" />
+                <BookmarkSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Kept" />
               )}
               {message.pinned && (
-                <MapPinSolidIcon className="h-3 w-3 text-gray-400" aria-label="Pinned" />
+                <MapPinSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Pinned" />
               )}
               {formatTime(message.timestamp)}
             </span>
@@ -616,18 +618,20 @@ export function ChatView({
       .find((m) => m.senderId === myUserId && m.status === 'read')?.id ?? null;
 
   return (
-    <div className="flex h-full min-h-0 flex-1 flex-col bg-gradient-to-br from-[#f1ecfb] via-[#eaeefb] to-[#e6effb]">
+    // Crisp white canvas in light mode — the old lavender-grey gradient was the main
+    // source of the "ash" cast across the app. Deep slate in dark.
+    <div className="flex h-full min-h-0 flex-1 flex-col bg-white transition-colors duration-300 ease-in-out dark:bg-gray-950">
       {/* Header — either peer identity + connection, or the selection toolbar. */}
       {selectMode ? (
-        <header className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white/80 px-4 py-3 backdrop-blur-sm sm:px-6">
+        <header className="flex shrink-0 items-center gap-3 border-b border-black/5 dark:border-white/10 bg-white/80 dark:bg-gray-900/80 transition-colors duration-300 ease-in-out px-4 py-3 backdrop-blur-sm sm:px-6">
           <button
             type="button"
             aria-label="Cancel selection"
             onClick={exitSelectMode}
-            className="flex items-center justify-center rounded-full p-1.5 text-gray-500 transition-colors hover:bg-black/[0.05] hover:text-gray-700">
+            className="flex items-center justify-center rounded-full p-1.5 text-gray-500 dark:text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-700">
             <XMarkIcon className="h-5 w-5" />
           </button>
-          <span className="text-sm font-semibold text-gray-900">
+          <span className="text-sm font-semibold text-gray-900 dark:text-white">
             {selectedIds.size} selected
           </span>
           <div className="ml-auto flex items-center gap-1">
@@ -636,7 +640,7 @@ export function ChatView({
               aria-label="Copy selected"
               disabled={selectedIds.size === 0}
               onClick={copySelected}
-              className="flex items-center justify-center rounded-full p-2 text-gray-500 transition-colors hover:bg-black/[0.05] hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40">
+              className="flex items-center justify-center rounded-full p-2 text-gray-500 dark:text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-700 disabled:cursor-not-allowed disabled:opacity-40">
               <Square2StackIcon className="h-5 w-5" />
             </button>
             <button
@@ -650,10 +654,10 @@ export function ChatView({
           </div>
         </header>
       ) : (
-        <header className="flex shrink-0 items-center gap-3 border-b border-black/5 bg-white/70 px-4 py-3 backdrop-blur-sm sm:px-6">
+        <header className="flex shrink-0 items-center gap-3 border-b border-black/5 dark:border-white/10 bg-white/70 dark:bg-gray-900/70 transition-colors duration-300 ease-in-out px-4 py-3 backdrop-blur-sm sm:px-6">
           <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
           <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold text-gray-900">
+            <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">
               {peerName(conversation)}
             </span>
             {/* Live peer status: typing → online (glowing green) → last seen. */}
@@ -668,13 +672,13 @@ export function ChatView({
                 Online
               </span>
             ) : (
-              <span className="truncate text-xs text-gray-500">{formatLastSeen(peerLastSeen)}</span>
+              <span className="truncate text-xs text-gray-500 dark:text-gray-400">{formatLastSeen(peerLastSeen)}</span>
             )}
           </div>
           {/* Own-connection hint only when realtime is degraded — no static
               "Connected" noise in the normal (open) case. */}
           {connectionStatus !== 'open' && (
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-gray-500">
+            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
               <StatusDot
                 variant={CONNECTION_VARIANT[connectionStatus]}
                 label={CONNECTION_LABEL[connectionStatus]}
@@ -687,19 +691,19 @@ export function ChatView({
 
       {/* Pinned-message banner — shows the most recent pin for the room. */}
       {latestPinned && !selectMode && (
-        <div className="flex shrink-0 items-center gap-2 border-b border-black/5 bg-white/60 px-4 py-2 backdrop-blur-sm sm:px-6">
+        <div className="flex shrink-0 items-center gap-2 border-b border-black/5 dark:border-white/10 bg-white/60 dark:bg-gray-900/60 transition-colors duration-300 ease-in-out px-4 py-2 backdrop-blur-sm sm:px-6">
           <MapPinSolidIcon className="h-4 w-4 shrink-0 text-[var(--vibe-blue)]" />
           <div className="min-w-0 flex-1">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+            <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-400 dark:text-gray-500">
               Pinned{pinnedMessages.length > 1 ? ` · ${pinnedMessages.length}` : ''}
             </p>
-            <p className="truncate text-xs text-gray-600">{previewText(latestPinned.text)}</p>
+            <p className="truncate text-xs text-gray-600 dark:text-gray-300">{previewText(latestPinned.text)}</p>
           </div>
           <button
             type="button"
             aria-label="Unpin message"
             onClick={() => onTogglePin(latestPinned)}
-            className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-600">
+            className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:bg-black/[0.05] hover:text-gray-600">
             <XMarkIcon className="h-4 w-4" />
           </button>
         </div>
@@ -709,7 +713,7 @@ export function ChatView({
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-6 sm:px-6">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-4">
           {messages.length === 0 && (
-            <p className="text-center text-sm text-gray-500">
+            <p className="text-center text-sm text-gray-500 dark:text-gray-400">
               No messages yet. Say hello — messages are encrypted on your device
               before they&apos;re sent.
             </p>
@@ -726,7 +730,7 @@ export function ChatView({
               <Fragment key={message.id}>
                 {showDay && (
                   <div className="flex justify-center py-1">
-                    <span className="rounded-full bg-white/70 px-3 py-1 text-[11px] font-medium text-gray-500 shadow-sm ring-1 ring-black/[0.03] backdrop-blur-sm">
+                    <span className="rounded-full bg-white/70 dark:bg-gray-900/70 transition-colors duration-300 ease-in-out px-3 py-1 text-[11px] font-medium text-gray-500 dark:text-gray-400 shadow-sm ring-1 ring-black/[0.03] backdrop-blur-sm">
                       {dayLabel(message.timestamp)}
                     </span>
                   </div>
@@ -785,26 +789,26 @@ export function ChatView({
                 history up naturally (it's part of the shrink-0 composer, not an
                 overlay), so the scroll layout stays intact. */}
             {activeReply && (
-              <div className="mb-2 flex items-stretch gap-2 rounded-2xl bg-white/90 p-2 pl-3 shadow-[0_4px_16px_rgba(37,63,132,0.08)] ring-1 ring-black/[0.04]">
+              <div className="mb-2 flex items-stretch gap-2 rounded-2xl bg-white/90 dark:bg-gray-900/90 transition-colors duration-300 ease-in-out p-2 pl-3 shadow-[0_4px_16px_rgba(37,63,132,0.08)] ring-1 ring-black/[0.04]">
                 <span className="w-1 shrink-0 rounded-full bg-[var(--vibe-blue)]" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-[var(--vibe-blue)]">
                     Replying to {replyIsMine ? 'yourself' : peerName(conversation)}
                   </p>
-                  <p className="truncate text-xs text-gray-500">{previewText(activeReply.text)}</p>
+                  <p className="truncate text-xs text-gray-500 dark:text-gray-400">{previewText(activeReply.text)}</p>
                 </div>
                 <button
                   type="button"
                   aria-label="Cancel reply"
                   onClick={() => setReplyingTo(null)}
-                  className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-600">
+                  className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:bg-black/[0.05] hover:text-gray-600">
                   <XMarkIcon className="h-4 w-4" />
                 </button>
               </div>
             )}
 
             <form
-              className="flex items-center gap-1.5 rounded-full bg-white p-1.5 pl-3 shadow-[0_8px_30px_rgba(37,63,132,0.12)] ring-1 ring-black/[0.04]"
+              className="flex items-center gap-1.5 rounded-full bg-white dark:bg-gray-900 p-1.5 pl-3 shadow-[0_8px_30px_rgba(37,63,132,0.12)] ring-1 ring-black/[0.04]"
               onSubmit={(event) => {
                 event.preventDefault();
                 handleSend();
@@ -812,7 +816,7 @@ export function ChatView({
               <button
                 type="button"
                 aria-label="Add emoji"
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 transition-colors hover:text-gray-600">
+                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600">
                 <FaceSmileIcon className="h-6 w-6" />
               </button>
 
@@ -831,13 +835,13 @@ export function ChatView({
                   else stopTyping();
                 }}
                 onBlur={stopTyping}
-                className="min-w-0 flex-1 bg-transparent px-1 text-sm text-gray-900 outline-none placeholder:text-gray-400"
+                className="min-w-0 flex-1 bg-transparent px-1 text-sm text-gray-900 dark:text-white outline-none placeholder:text-gray-400"
               />
 
               <button
                 type="button"
                 aria-label="Attach file"
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 transition-colors hover:text-gray-600">
+                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600">
                 <PaperClipIcon className="h-6 w-6" />
               </button>
 
@@ -845,7 +849,7 @@ export function ChatView({
                 type="submit"
                 aria-label="Send message"
                 disabled={!canSend}
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--vibe-blue)] text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-gray-300">
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[var(--vibe-blue)] text-white shadow-sm transition hover:brightness-105 disabled:cursor-not-allowed disabled:bg-gray-300 dark:disabled:bg-gray-700">
                 <PaperAirplaneIcon className="h-5 w-5" />
               </button>
             </form>

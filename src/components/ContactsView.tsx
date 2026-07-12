@@ -135,7 +135,7 @@ export function ContactsView({
 
         <div className="relative">
           <Search
-            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400"
+            className="pointer-events-none absolute left-3.5 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400 dark:text-gray-500"
             aria-hidden
           />
           <input
@@ -254,7 +254,7 @@ function ContactRow({ contact, onSelect }: { contact: Contact; onSelect: () => v
         }}
         aria-label={`Message ${contact.name}`}
         title="Message"
-        className="flex-shrink-0 rounded-lg p-2 text-gray-400 opacity-0 transition-all duration-200 hover:bg-sky-500 hover:text-white group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 [@media(hover:none)]:opacity-100">
+        className="flex-shrink-0 rounded-lg p-2 text-gray-400 dark:text-gray-500 opacity-0 transition-all duration-200 hover:bg-sky-500 hover:text-white group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-400/50 [@media(hover:none)]:opacity-100">
         <MessageCircle className="h-5 w-5" />
       </button>
     </div>

@@ -1,9 +1,12 @@
 // Global site footer for VibeNet.
 //
 // Rendered once from the root layout. Shows on the marketing and auth pages, but
-// hides on the full-height app shell (dashboard, settings): there a marketing
-// footer is out of place and pushes the layout past the viewport, adding a
-// scrollbar to what should be a fixed, single-screen chat UI.
+// hides on the full-height app shell (/dashboard): there a marketing footer is out of
+// place and pushes the layout past the viewport, adding a scrollbar to what should be
+// a fixed, single-screen chat UI.
+//
+// Settings used to have a route of its own and needed listing here too; it now renders
+// inside the dashboard shell, so /dashboard covers it.
 
 'use client';
 
@@ -13,7 +16,7 @@ import { Link } from '@astryxdesign/core/Link';
 
 // Route prefixes rendered inside the full-height app shell, where the footer is
 // suppressed. Everything else (landing, /login, /register, /auth/*) keeps it.
-const APP_ROUTES = ['/dashboard', '/settings'];
+const APP_ROUTES = ['/dashboard'];
 
 export function Footer() {
   const pathname = usePathname();

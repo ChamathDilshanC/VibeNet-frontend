@@ -28,6 +28,8 @@ import {
 } from '@heroicons/react/24/outline';
 import { resolveAvatarUrl, type AuthUser } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
+import type { DashboardView } from './DashboardShell';
+import type { SettingsSection } from './SettingsPanel';
 
 export function Sidebar({
   user,
@@ -37,7 +39,8 @@ export function Sidebar({
   onSelectConversation,
   onNewChat,
   onContacts,
-  isContactsActive,
+  onSettings,
+  activeView,
   onLogout,
 }: {
   user: AuthUser | null;
@@ -47,9 +50,13 @@ export function Sidebar({
   onSelectConversation: (peerId: string) => void;
   onNewChat: () => void;
   onContacts: () => void;
-  isContactsActive: boolean;
+  // Swaps the main pane to settings, on the given section. These used to be links to
+  // /settings; that route is gone — settings now renders in place beside this nav.
+  onSettings: (section?: SettingsSection) => void;
+  activeView: DashboardView;
   onLogout: () => void;
 }) {
+  const isSettingsActive = activeView === 'settings';
   return (
     <SideNav
       className="vibe-sidenav"
@@ -71,8 +78,17 @@ export function Sidebar({
       }
       footer={
         <SideNavSection title="Account" isHeaderHidden>
-          <SideNavItem label="Chat PIN" icon={ShieldCheckIcon} href="/settings?tab=pin" />
-          <SideNavItem label="Settings" icon={Cog6ToothIcon} href="/settings" />
+          <SideNavItem
+            label="Chat PIN"
+            icon={ShieldCheckIcon}
+            onClick={() => onSettings('security')}
+          />
+          <SideNavItem
+            label="Settings"
+            icon={Cog6ToothIcon}
+            onClick={() => onSettings('profile')}
+            isSelected={isSettingsActive}
+          />
           <SideNavItem
             label={user?.display_name || user?.username || 'Account'}
             icon={
@@ -82,7 +98,7 @@ export function Sidebar({
                 size="tiny"
               />
             }
-            href="/settings"
+            onClick={() => onSettings('profile')}
           />
           <SideNavItem
             label="Log out"
@@ -102,7 +118,7 @@ export function Sidebar({
           label="Contacts"
           icon={UsersIcon}
           onClick={onContacts}
-          isSelected={isContactsActive}
+          isSelected={activeView === 'contacts'}
         />
       </SideNavSection>
       <Divider />

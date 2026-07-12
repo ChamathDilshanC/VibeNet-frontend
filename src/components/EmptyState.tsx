@@ -39,7 +39,7 @@ export function EmptyState({
 
       {recent.length > 0 && (
         <div className="flex flex-col gap-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500">
+          <p className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
             Recent chats
           </p>
           <ul className="flex flex-col gap-1">
@@ -56,14 +56,14 @@ export function EmptyState({
                       name={conversation.peerUsername}
                       size="small"
                     />
-                    <span className="flex-1 truncate text-sm font-medium text-gray-800">
+                    <span className="flex-1 truncate text-sm font-medium text-gray-800 dark:text-gray-100">
                       {conversation.peerUsername}
                     </span>
                     <span
                       role="img"
                       aria-label={isOnline ? 'Online' : 'Offline'}
                       className={`h-2.5 w-2.5 rounded-full ${
-                        isOnline ? 'bg-green-500' : 'bg-gray-300'
+                        isOnline ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-700'
                       }`}
                     />
                   </button>

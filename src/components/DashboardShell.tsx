@@ -48,7 +48,14 @@ import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
 import { PinPromptDialog } from './PinPromptDialog';
+import { SettingsPanel, type SettingsSection } from './SettingsPanel';
 import { Sidebar } from './Sidebar';
+
+// What's showing in the main content pane beside the sidebar. 'chat' covers both an
+// open conversation and the welcome/empty state — settings and contacts are rendered
+// in place of it, Discord-style, so switching to them never tears down the chat shell
+// (socket, conversation registry, derived keys all stay live behind them).
+export type DashboardView = 'chat' | 'contacts' | 'settings';
 
 // A frame off the WebSocket. `type` discriminates a chat message from the
 // delivery/read control frames (see the backend websocket package); the
@@ -113,9 +120,13 @@ interface RemoteMessageDTO {
 export function DashboardShell({
   user,
   onLogout,
+  onUserUpdated,
 }: {
   user: AuthUser | null;
   onLogout: () => void;
+  // Applies a profile the settings panel just persisted, so the sidebar avatar and
+  // every other reader of the session agree without a reload (see useAuth.updateUser).
+  onUserUpdated: (user: AuthUser) => void;
 }) {
   const keyState = useE2EEKeys(user);
 
@@ -123,10 +134,12 @@ export function DashboardShell({
     user ? listConversations(user.user_id) : [],
   );
   const [activePeerId, setActivePeerId] = useState<string | null>(null);
-  // Whether the Contacts directory is showing in the main area instead of a
-  // chat/welcome. Opening any conversation clears it (see openPeer) so picking a
-  // contact returns to the chat view.
-  const [showContacts, setShowContacts] = useState(false);
+  // What the main pane is showing. Opening any conversation returns it to 'chat'
+  // (see openPeer), so picking a contact or a DM leaves settings.
+  const [activeView, setActiveView] = useState<DashboardView>('chat');
+  // Which settings section is open. Held here (rather than inside SettingsPanel) so the
+  // sidebar's "Chat PIN" shortcut can jump straight to Privacy & Security.
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>('profile');
   // Chat-PIN gate for NEW conversations only: when the TARGET being messaged has
   // chat_pin_enabled, starting a chat via username search prompts for THAT
   // recipient's PIN (their anti-spam gate) before the room opens — verified
@@ -621,8 +634,15 @@ export function DashboardShell({
   // the empty-state "Recent chats" list use this path and never trigger the PIN gate.
   const openPeer = useCallback((peerId: string) => {
     if (!peerId) return;
-    setShowContacts(false);
+    setActiveView('chat');
     setActivePeerId(peerId);
+  }, []);
+
+  // Opens settings in the main pane, optionally on a specific section — the sidebar's
+  // "Chat PIN" item uses this to land directly on Privacy & Security.
+  const openSettings = useCallback((section: SettingsSection = 'profile') => {
+    setSettingsSection(section);
+    setActiveView('settings');
   }, []);
 
   // Persists a conversation into the client registry and opens it. Used once a
@@ -635,7 +655,7 @@ export function DashboardShell({
         ? prev
         : { ...prev, [conversation.chatRoomId]: getMessages(conversation.chatRoomId) },
     );
-    setShowContacts(false);
+    setActiveView('chat');
     setActivePeerId(conversation.peerId);
   }, []);
 
@@ -684,7 +704,7 @@ export function DashboardShell({
     // Search dialog closes on select; defer one frame so the overlay stack never
     // shows two dialogs at once, then either prompt for the target's PIN or open.
     setIsNewChatOpen(false);
-    setShowContacts(false);
+    setActiveView('chat');
     requestAnimationFrame(() => {
       if (needsPin) {
         // Hold the conversation unsaved until the PIN is verified (see submitChatPin).
@@ -923,12 +943,21 @@ export function DashboardShell({
             setNewChatSession((n) => n + 1);
             setIsNewChatOpen(true);
           }}
-          onContacts={() => setShowContacts(true)}
-          isContactsActive={showContacts}
+          onContacts={() => setActiveView('contacts')}
+          onSettings={openSettings}
+          activeView={activeView}
           onLogout={onLogout}
         />
       }>
-      {showContacts ? (
+      {activeView === 'settings' ? (
+        <SettingsPanel
+          user={user}
+          section={settingsSection}
+          onSectionChange={setSettingsSection}
+          onUserUpdated={onUserUpdated}
+          onLogout={onLogout}
+        />
+      ) : activeView === 'contacts' ? (
         <ContactsView
           conversations={conversations}
           onlinePeers={visibleOnlinePeers}
