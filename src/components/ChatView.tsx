@@ -109,6 +109,36 @@ function isSameDay(a: number, b: number): boolean {
   );
 }
 
+// Fixed palette a sender's name label is picked from — WhatsApp/Telegram
+// style, so a group chat with several people doesn't render every name in the
+// same green. Ten hues, each dark/saturated enough to stay legible on both a
+// white bubble (light mode) and gray-900 (dark mode) without needing a
+// separate dark-mode variant per color.
+const SENDER_NAME_COLORS = [
+  '#d1453b', // red
+  '#e0862f', // amber
+  '#9c6ade', // purple
+  '#2f9e44', // green
+  '#12a3a3', // teal
+  '#3b82c4', // blue
+  '#d6478a', // pink
+  '#b8860b', // gold
+  '#4f9e8f', // sea green
+  '#7c6fd6', // indigo
+];
+
+// Deterministic hash → stable palette index, so the same sender always gets
+// the same color across messages, reloads, and everyone's screen — not a
+// fresh random pick each render, which would make names flicker between
+// colors and disagree between participants.
+function colorForSender(senderId: string): string {
+  let hash = 0;
+  for (let i = 0; i < senderId.length; i++) {
+    hash = (hash * 31 + senderId.charCodeAt(i)) | 0;
+  }
+  return SENDER_NAME_COLORS[Math.abs(hash) % SENDER_NAME_COLORS.length];
+}
+
 // A day separator label: "Today"/"Yesterday" for the two most recent days,
 // otherwise a written-out date (the year is dropped when it's the current one).
 function dayLabel(timestamp: number): string {
@@ -406,7 +436,9 @@ function MessageRow({
           <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
-            <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
+            <span
+              className="mb-0.5 block text-[13px] font-semibold"
+              style={{ color: colorForSender(message.senderId) }}>
               {senderName}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
