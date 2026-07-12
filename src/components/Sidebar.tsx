@@ -213,7 +213,13 @@ export function Sidebar({
           <SideNavItem
             key={group.group_id}
             label={group.name}
-            icon={<Avatar name={group.name} size="tiny" />}
+            icon={
+              <Avatar
+                src={resolveAvatarUrl(group.avatar_url)}
+                name={group.name}
+                size="tiny"
+              />
+            }
             isSelected={group.group_id === activeGroupId}
             onClick={() => onSelectGroup(group.group_id)}
             endContent={

@@ -442,6 +442,7 @@ export function ChatView({
   typingNames = [],
   onTyping,
   onInviteMember,
+  onOpenDetails,
   onForward,
   onTogglePin,
   onToggleKeep,
@@ -471,6 +472,8 @@ export function ChatView({
   onTyping: (isTyping: boolean) => void;
   /** Opens the invite dialog — rendered as a header action in group rooms. */
   onInviteMember?: () => void;
+  /** Opens the group-details popup — makes the group header identity clickable. */
+  onOpenDetails?: () => void;
   onForward: (message: ChatMessage) => void;
   onTogglePin: (message: ChatMessage) => void;
   onToggleKeep: (message: ChatMessage) => void;
@@ -710,41 +713,67 @@ export function ChatView({
         </header>
       ) : (
         <header className="flex shrink-0 items-center gap-3 border-b border-black/5 dark:border-white/10 bg-white/70 dark:bg-gray-900/70 transition-colors duration-300 ease-in-out px-4 py-3 backdrop-blur-sm sm:px-6">
-          <Avatar
-            src={isGroup ? undefined : resolveAvatarUrl(conversation?.peerAvatarUrl)}
-            name={title}
-            size="small"
-          />
-          <div className="flex min-w-0 flex-col">
-            <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">
-              {title}
-            </span>
-            {isGroup ? (
-              // Group status line: who's composing, else the member count.
-              groupTypingLabel ? (
-                <span className="truncate text-xs font-medium text-[var(--vibe-blue)]">
-                  {groupTypingLabel}
-                </span>
-              ) : (
-                <span className="truncate text-xs text-gray-500 dark:text-gray-400">
-                  {group!.members.length} {group!.members.length === 1 ? 'member' : 'members'}
-                </span>
-              )
-            ) : /* Live peer status: typing → online (glowing green) → last seen. */
-            isPeerTyping ? (
-              <span className="text-xs font-medium text-[var(--vibe-blue)]">typing…</span>
-            ) : isPeerOnline ? (
-              <span className="flex items-center gap-1.5 text-xs font-medium text-[#277a0c]">
-                <span className="relative flex h-2 w-2">
-                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-70" />
-                  <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)]" />
-                </span>
-                Online
-              </span>
+          {(() => {
+            // Identity block (avatar + name + status). In a group room it's a
+            // button that opens the group-details popup; in a DM it stays inert.
+            const identity = (
+              <>
+                <Avatar
+                  src={
+                    group
+                      ? resolveAvatarUrl(group.avatar_url)
+                      : resolveAvatarUrl(conversation?.peerAvatarUrl)
+                  }
+                  name={title}
+                  size="small"
+                />
+                <div className="flex min-w-0 flex-col">
+                  <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">
+                    {title}
+                  </span>
+                  {isGroup ? (
+                    // Group status line: who's composing, else the member count.
+                    groupTypingLabel ? (
+                      <span className="truncate text-xs font-medium text-[var(--vibe-blue)]">
+                        {groupTypingLabel}
+                      </span>
+                    ) : (
+                      <span className="truncate text-xs text-gray-500 dark:text-gray-400">
+                        {group!.members.length}{' '}
+                        {group!.members.length === 1 ? 'member' : 'members'}
+                      </span>
+                    )
+                  ) : /* Live peer status: typing → online (glowing green) → last seen. */
+                  isPeerTyping ? (
+                    <span className="text-xs font-medium text-[var(--vibe-blue)]">typing…</span>
+                  ) : isPeerOnline ? (
+                    <span className="flex items-center gap-1.5 text-xs font-medium text-[#277a0c]">
+                      <span className="relative flex h-2 w-2">
+                        <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-green-400 opacity-70" />
+                        <span className="relative inline-flex h-2 w-2 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.7)]" />
+                      </span>
+                      Online
+                    </span>
+                  ) : (
+                    <span className="truncate text-xs text-gray-500 dark:text-gray-400">{formatLastSeen(peerLastSeen)}</span>
+                  )}
+                </div>
+              </>
+            );
+
+            return isGroup && onOpenDetails ? (
+              <button
+                type="button"
+                onClick={onOpenDetails}
+                aria-label="Open group details"
+                title="Group details"
+                className="-mx-2 flex min-w-0 items-center gap-3 rounded-xl px-2 py-1 text-left outline-none transition-colors hover:bg-black/[0.04] focus-visible:ring-2 focus-visible:ring-sky-400/50 dark:hover:bg-white/10">
+                {identity}
+              </button>
             ) : (
-              <span className="truncate text-xs text-gray-500 dark:text-gray-400">{formatLastSeen(peerLastSeen)}</span>
-            )}
-          </div>
+              identity
+            );
+          })()}
           <div className="ml-auto flex shrink-0 items-center gap-2">
             {/* Own-connection hint only when realtime is degraded — no static
                 "Connected" noise in the normal (open) case. */}

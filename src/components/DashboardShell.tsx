@@ -45,6 +45,8 @@ import {
   groupRoomId,
   inviteToGroup,
   memberName,
+  renameGroup,
+  uploadGroupAvatar,
   type Group,
   type GroupInvite,
   type WrappedKeyInput,
@@ -69,6 +71,7 @@ import { ContactsView } from './ContactsView';
 import { CreateGroupDialog, type SelectedGroupMember } from './CreateGroupDialog';
 import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
+import { GroupDetailsDialog } from './GroupDetailsDialog';
 import { InviteMemberDialog, type InviteTarget } from './InviteMemberDialog';
 import { InvitesView } from './InvitesView';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
@@ -224,6 +227,10 @@ export function DashboardShell({
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false);
   const [isInvitingMember, setIsInvitingMember] = useState(false);
+  // Group-details popup (opened by clicking the group chat header).
+  const [isGroupDetailsOpen, setIsGroupDetailsOpen] = useState(false);
+  const [isSavingGroupName, setIsSavingGroupName] = useState(false);
+  const [isUploadingGroupPhoto, setIsUploadingGroupPhoto] = useState(false);
   // Member IDs currently composing, per group — drives "X is typing…" in the
   // group header. The DM equivalent is the flat typingPeers set above.
   const [groupTyping, setGroupTyping] = useState<Record<string, ReadonlySet<string>>>({});
@@ -1055,6 +1062,44 @@ export function DashboardShell({
     }
   }
 
+  // Renames the open group. The response carries the updated group; other
+  // members refresh via the group_update broadcast.
+  async function handleRenameGroup(name: string) {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group) return;
+    setIsSavingGroupName(true);
+    try {
+      const updated = await renameGroup(group.group_id, name);
+      setGroups((prev) => prev.map((g) => (g.group_id === updated.group_id ? updated : g)));
+      gooeyToast('Group renamed');
+    } catch (err) {
+      gooeyToast('Could not rename group', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsSavingGroupName(false);
+    }
+  }
+
+  // Uploads a new group photo and swaps the updated group into state so the
+  // sidebar, header, and details popup all show it immediately.
+  async function handleUploadGroupPhoto(file: File) {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group) return;
+    setIsUploadingGroupPhoto(true);
+    try {
+      const updated = await uploadGroupAvatar(group.group_id, file);
+      setGroups((prev) => prev.map((g) => (g.group_id === updated.group_id ? updated : g)));
+      gooeyToast('Group photo updated');
+    } catch (err) {
+      gooeyToast('Could not update group photo', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsUploadingGroupPhoto(false);
+    }
+  }
+
   // Accepting drops the user straight into the group — it appears in the
   // sidebar and opens immediately, no extra step.
   async function handleAcceptInvite(invite: GroupInvite) {
@@ -1503,6 +1548,7 @@ export function DashboardShell({
             })
           }
           onInviteMember={() => setIsInviteMemberOpen(true)}
+          onOpenDetails={() => setIsGroupDetailsOpen(true)}
           onForward={setForwardingMessage}
           onTogglePin={handleTogglePin}
           onToggleKeep={handleToggleKeep}
@@ -1593,6 +1639,26 @@ export function DashboardShell({
           group={activeGroup}
           isInviting={isInvitingMember}
           onInvite={(target) => void handleInviteMember(target)}
+        />
+      )}
+
+      {user && (
+        <GroupDetailsDialog
+          // Remount per group so an in-progress name edit never leaks between rooms.
+          key={`group-details-${activeGroupId ?? 'none'}`}
+          isOpen={isGroupDetailsOpen && activeGroup !== null}
+          onOpenChange={setIsGroupDetailsOpen}
+          group={activeGroup}
+          currentUserId={user.user_id}
+          isSavingName={isSavingGroupName}
+          isUploadingPhoto={isUploadingGroupPhoto}
+          onRename={(name) => void handleRenameGroup(name)}
+          onUploadPhoto={(file) => void handleUploadGroupPhoto(file)}
+          onInviteMember={() => {
+            // Swap popups rather than stacking two dialogs.
+            setIsGroupDetailsOpen(false);
+            setIsInviteMemberOpen(true);
+          }}
         />
       )}
 

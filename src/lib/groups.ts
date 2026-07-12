@@ -7,7 +7,9 @@
 // derives the pairwise ECDH key with the wrapper and unwraps locally. See
 // src/lib/e2ee.ts for the primitives; DashboardShell owns the unwrap cache.
 
+import { API_BASE_URL, ApiError } from './api';
 import { apiClient } from './apiClient';
+import { getToken } from './session';
 
 export interface GroupMember {
   user_id: string;
@@ -23,6 +25,8 @@ export interface Group {
   created_by: string;
   /** Unix ms. */
   created_at: number;
+  /** Group photo, backend-relative like user avatars. Absent → name initials. */
+  avatar_url?: string;
   members: GroupMember[];
   /** The current user's wrapped copy of the group key (base64 AES-GCM ciphertext). */
   wrapped_key: string;
@@ -115,4 +119,47 @@ export function acceptInvite(inviteId: string): Promise<Group> {
 // POST /api/invites/decline — dismisses a pending invite.
 export function declineInvite(inviteId: string): Promise<{ status: string }> {
   return apiClient.post<{ status: string }>('/api/invites/decline', { invite_id: inviteId });
+}
+
+// PUT /api/groups/{id} — renames the group (any member may). Returns the
+// updated group; other members are nudged live via a group_update frame.
+export function renameGroup(groupId: string, name: string): Promise<Group> {
+  return apiClient.put<Group>(`/api/groups/${encodeURIComponent(groupId)}`, { name });
+}
+
+// POST /api/groups/{id}/avatar — uploads a new group photo as
+// multipart/form-data and returns the updated group.
+//
+// Bypasses apiClient for the same reason uploadAvatar in user.ts does: a
+// multipart body needs the browser to set its own Content-Type boundary.
+export async function uploadGroupAvatar(groupId: string, file: File): Promise<Group> {
+  const token = getToken();
+  const form = new FormData();
+  form.append('avatar', file);
+
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}/api/groups/${encodeURIComponent(groupId)}/avatar`, {
+      method: 'POST',
+      headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+      body: form,
+    });
+  } catch {
+    throw new ApiError(0, 'Cannot reach the server. Is the backend running?');
+  }
+
+  let data: unknown = null;
+  try {
+    data = await res.json();
+  } catch {
+    // No/non-JSON body; fall through to status handling.
+  }
+
+  if (!res.ok) {
+    const message =
+      (data as { error?: string } | null)?.error ?? `Upload failed (${res.status})`;
+    throw new ApiError(res.status, message);
+  }
+
+  return data as Group;
 }
