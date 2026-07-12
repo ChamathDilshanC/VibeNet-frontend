@@ -1383,8 +1383,12 @@ export function DashboardShell({
     setIsSending(true);
     setSendError(null);
     try {
+      // The composer already blocks sending until this device's own E2EE keys
+      // are ready (see ChatView's keysReady), so reaching this with no entry
+      // means the group key itself couldn't be unwrapped — a different,
+      // rarer problem than "not ready yet".
       const entry = await getGroupKey(group);
-      if (!entry) throw new Error('Encryption keys are not ready yet.');
+      if (!entry) throw new Error('Could not access the group encryption key. Try reopening the group.');
 
       const { ciphertext, nonce } = await encryptText(
         entry.key,
@@ -1758,6 +1762,7 @@ export function DashboardShell({
           onSend={handleSend}
           isSending={isSending}
           sendError={sendError}
+          keysReady={keyState.status === 'ready'}
           connectionStatus={connectionStatus}
           typingNames={activeGroupTypingNames}
           onTyping={(isTyping) =>
@@ -1786,6 +1791,7 @@ export function DashboardShell({
           onSend={handleSend}
           isSending={isSending}
           sendError={sendError}
+          keysReady={keyState.status === 'ready'}
           connectionStatus={connectionStatus}
           isPeerOnline={visibleOnlinePeers.has(activeConversation.peerId)}
           peerLastSeen={lastSeenByPeer[activeConversation.peerId] ?? null}

@@ -439,6 +439,7 @@ export function ChatView({
   onSend,
   isSending,
   sendError,
+  keysReady = true,
   connectionStatus,
   isPeerOnline = false,
   peerLastSeen,
@@ -465,6 +466,11 @@ export function ChatView({
   onSend: (text: string, replyTo?: ReplyPreview) => void;
   isSending: boolean;
   sendError: string | null;
+  /** False while this device's E2EE keypair is still being generated/published
+   *  (freshest right after a first-ever login) — sending before then always
+   *  fails, so the composer blocks it instead of surfacing a confusing error.
+   *  Defaults to true so a caller that doesn't pass it fails open, not shut. */
+  keysReady?: boolean;
   connectionStatus: ChatSocketStatus;
   /** Whether the DM peer currently has a live WebSocket connection. */
   isPeerOnline?: boolean;
@@ -680,7 +686,7 @@ export function ChatView({
     exitSelectMode();
   }
 
-  const canSend = Boolean(draft.trim()) && !isSending;
+  const canSend = Boolean(draft.trim()) && !isSending && keysReady;
   const pinnedMessages = messages.filter((m) => m.pinned);
   const latestPinned = pinnedMessages[pinnedMessages.length - 1];
   const replyIsMine = activeReply?.senderId === myUserId;
@@ -986,7 +992,13 @@ export function ChatView({
                 ref={inputRef}
                 rows={1}
                 aria-label="Message"
-                placeholder={activeReply ? 'Type your reply…' : `Message ${title}`}
+                placeholder={
+                  !keysReady
+                    ? 'Setting up encryption…'
+                    : activeReply
+                      ? 'Type your reply…'
+                      : `Message ${title}`
+                }
                 value={draft}
                 onChange={(event) => {
                   const value = event.target.value;
