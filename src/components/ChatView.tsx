@@ -27,6 +27,7 @@ import {
   PaperClipIcon,
   Square2StackIcon,
   TrashIcon,
+  UserPlusIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -39,6 +40,7 @@ import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
+import { memberName, type Group } from '@/lib/groups';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { MessageContextMenu } from './MessageContextMenu';
 import { TypingIndicator } from './TypingIndicator';
@@ -211,7 +213,10 @@ interface MessageActions {
 function MessageRow({
   message,
   isMine,
-  conversation,
+  senderName,
+  senderAvatarUrl,
+  readReceiptName,
+  readReceiptAvatarUrl,
   actions,
   menuOpen,
   onMenuOpenChange,
@@ -222,7 +227,14 @@ function MessageRow({
 }: {
   message: ChatMessage;
   isMine: boolean;
-  conversation: Conversation;
+  // Resolved by the parent so the row renders identically for DMs (always the
+  // peer) and group rooms (looked up per message from the roster).
+  senderName: string;
+  senderAvatarUrl?: string;
+  // Who the "seen" avatar depicts — the DM peer. Unused in group rooms, where
+  // showReadReceipt is always false (there are no group read receipts).
+  readReceiptName?: string;
+  readReceiptAvatarUrl?: string;
   actions: MessageActions;
   menuOpen: boolean;
   onMenuOpenChange: (open: boolean) => void;
@@ -368,10 +380,10 @@ function MessageRow({
               transition={{ type: 'spring', stiffness: 500, damping: 32, mass: 0.7 }}
               className="mb-2.5 shrink-0">
               <Avatar
-                src={resolveAvatarUrl(conversation.peerAvatarUrl)}
-                name={peerName(conversation)}
+                src={resolveAvatarUrl(readReceiptAvatarUrl)}
+                name={readReceiptName}
                 size={16}
-                alt={`Seen by ${peerName(conversation)}`}
+                alt={`Seen by ${readReceiptName}`}
                 // rounded-full is load-bearing: this className lands on the Avatar's
                 // ROOT element, whose border-radius is 0 (the circle is clipped on an
                 // inner div). Tailwind's ring is a box-shadow that follows the
@@ -386,12 +398,12 @@ function MessageRow({
       ) : (
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
-          <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
+          <Avatar src={resolveAvatarUrl(senderAvatarUrl)} name={senderName} size="small" />
           <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span className="mb-0.5 block text-[13px] font-semibold text-[#277a0c]">
-              {peerName(conversation)}
+              {senderName}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
             <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">
@@ -416,38 +428,49 @@ function MessageRow({
 }
 
 export function ChatView({
-  conversation,
+  conversation = null,
+  group = null,
   messages,
   myUserId,
   onSend,
   isSending,
   sendError,
   connectionStatus,
-  isPeerOnline,
+  isPeerOnline = false,
   peerLastSeen,
-  isPeerTyping,
+  isPeerTyping = false,
+  typingNames = [],
   onTyping,
+  onInviteMember,
   onForward,
   onTogglePin,
   onToggleKeep,
   onDeleteForMe,
   onDeleteForEveryone,
 }: {
-  conversation: Conversation;
+  /** The open DM. Exactly one of `conversation`/`group` is set. */
+  conversation?: Conversation | null;
+  /** The open group room — switches the header, sender names, and typing labels
+   *  to roster-based resolution while every other behaviour stays shared. */
+  group?: Group | null;
   messages: ChatMessage[];
   myUserId: string;
   onSend: (text: string, replyTo?: ReplyPreview) => void;
   isSending: boolean;
   sendError: string | null;
   connectionStatus: ChatSocketStatus;
-  /** Whether the peer currently has a live WebSocket connection. */
-  isPeerOnline: boolean;
-  /** Peer's last-seen time (unix ms), shown when offline. */
+  /** Whether the DM peer currently has a live WebSocket connection. */
+  isPeerOnline?: boolean;
+  /** DM peer's last-seen time (unix ms), shown when offline. */
   peerLastSeen?: number | null;
-  /** Whether the peer is currently composing — drives the typing indicator. */
-  isPeerTyping: boolean;
-  /** Notify the peer that we started/stopped composing (throttled here). */
+  /** Whether the DM peer is currently composing — drives the typing indicator. */
+  isPeerTyping?: boolean;
+  /** Display names of group members currently composing ("X is typing…"). */
+  typingNames?: string[];
+  /** Notify the room that we started/stopped composing (throttled here). */
   onTyping: (isTyping: boolean) => void;
+  /** Opens the invite dialog — rendered as a header action in group rooms. */
+  onInviteMember?: () => void;
   onForward: (message: ChatMessage) => void;
   onTogglePin: (message: ChatMessage) => void;
   onToggleKeep: (message: ChatMessage) => void;
@@ -461,6 +484,32 @@ export function ChatView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // ── DM/group resolution ─────────────────────────────────────────────────
+  // Everything below renders from these instead of touching conversation/group
+  // directly, so the bubbles, header, and typing UI stay identical across both
+  // room kinds. In a DM every non-mine message is from the peer; in a group the
+  // sender is looked up in the roster per message.
+  const isGroup = group !== null;
+  const title = group ? group.name : conversation ? peerName(conversation) : '';
+  const chatKey = group ? group.group_id : (conversation?.peerId ?? '');
+  const senderNameOf = (senderId: string): string =>
+    group ? memberName(group, senderId) : conversation ? peerName(conversation) : '';
+  const senderAvatarOf = (senderId: string): string | undefined =>
+    group
+      ? group.members.find((m) => m.user_id === senderId)?.avatar_url
+      : conversation?.peerAvatarUrl;
+
+  // Group typing line, WhatsApp-style: name one or two composers, then summarise.
+  const groupTypingLabel =
+    isGroup && typingNames.length > 0
+      ? typingNames.length === 1
+        ? `${typingNames[0]} is typing…`
+        : typingNames.length === 2
+          ? `${typingNames[0]} and ${typingNames[1]} are typing…`
+          : `${typingNames[0]} and ${typingNames.length - 1} others are typing…`
+      : null;
+  const someoneIsTyping = isGroup ? groupTypingLabel !== null : isPeerTyping;
 
   // Typing-notify bookkeeping: `typingActiveRef` tracks whether we've told the
   // peer we're typing (so we send "true" once, not per keystroke); the idle timer
@@ -505,22 +554,22 @@ export function ChatView({
     typingIdleTimerRef.current = setTimeout(stopTyping, TYPING_IDLE_MS);
   }
 
-  // Switching conversations (or unmounting): forget our local typing state
-  // without emitting to the new peer — the old peer's indicator self-clears via
-  // its 3-second timeout.
+  // Switching rooms (or unmounting): forget our local typing state without
+  // emitting to the new room — the old room's indicator self-clears via its
+  // inactivity timeout.
   useEffect(() => {
     return () => {
       if (typingIdleTimerRef.current) clearTimeout(typingIdleTimerRef.current);
       typingActiveRef.current = false;
       lastTypingSentRef.current = 0;
     };
-  }, [conversation.peerId]);
+  }, [chatKey]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ block: 'end' });
     // Re-scroll when the typing bubble appears so it stays in view below the
     // last message.
-  }, [messages.length, isPeerTyping]);
+  }, [messages.length, someoneIsTyping]);
 
   // A message deleted while it was the reply target shouldn't leave a preview
   // pointing at nothing — derive the live target rather than clearing state in
@@ -539,7 +588,7 @@ export function ChatView({
     const replyTo: ReplyPreview | undefined = activeReply
       ? {
           messageId: activeReply.id,
-          senderName: activeReply.senderId === myUserId ? 'You' : peerName(conversation),
+          senderName: activeReply.senderId === myUserId ? 'You' : senderNameOf(activeReply.senderId),
           textPreview: previewText(activeReply.text),
         }
       : undefined;
@@ -661,13 +710,28 @@ export function ChatView({
         </header>
       ) : (
         <header className="flex shrink-0 items-center gap-3 border-b border-black/5 dark:border-white/10 bg-white/70 dark:bg-gray-900/70 transition-colors duration-300 ease-in-out px-4 py-3 backdrop-blur-sm sm:px-6">
-          <Avatar src={resolveAvatarUrl(conversation.peerAvatarUrl)} name={peerName(conversation)} size="small" />
+          <Avatar
+            src={isGroup ? undefined : resolveAvatarUrl(conversation?.peerAvatarUrl)}
+            name={title}
+            size="small"
+          />
           <div className="flex min-w-0 flex-col">
             <span className="truncate text-sm font-semibold text-gray-900 dark:text-white">
-              {peerName(conversation)}
+              {title}
             </span>
-            {/* Live peer status: typing → online (glowing green) → last seen. */}
-            {isPeerTyping ? (
+            {isGroup ? (
+              // Group status line: who's composing, else the member count.
+              groupTypingLabel ? (
+                <span className="truncate text-xs font-medium text-[var(--vibe-blue)]">
+                  {groupTypingLabel}
+                </span>
+              ) : (
+                <span className="truncate text-xs text-gray-500 dark:text-gray-400">
+                  {group!.members.length} {group!.members.length === 1 ? 'member' : 'members'}
+                </span>
+              )
+            ) : /* Live peer status: typing → online (glowing green) → last seen. */
+            isPeerTyping ? (
               <span className="text-xs font-medium text-[var(--vibe-blue)]">typing…</span>
             ) : isPeerOnline ? (
               <span className="flex items-center gap-1.5 text-xs font-medium text-[#277a0c]">
@@ -681,17 +745,29 @@ export function ChatView({
               <span className="truncate text-xs text-gray-500 dark:text-gray-400">{formatLastSeen(peerLastSeen)}</span>
             )}
           </div>
-          {/* Own-connection hint only when realtime is degraded — no static
-              "Connected" noise in the normal (open) case. */}
-          {connectionStatus !== 'open' && (
-            <span className="ml-auto flex shrink-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
-              <StatusDot
-                variant={CONNECTION_VARIANT[connectionStatus]}
-                label={CONNECTION_LABEL[connectionStatus]}
-              />
-              {CONNECTION_LABEL[connectionStatus]}
-            </span>
-          )}
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {/* Own-connection hint only when realtime is degraded — no static
+                "Connected" noise in the normal (open) case. */}
+            {connectionStatus !== 'open' && (
+              <span className="flex shrink-0 items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400">
+                <StatusDot
+                  variant={CONNECTION_VARIANT[connectionStatus]}
+                  label={CONNECTION_LABEL[connectionStatus]}
+                />
+                {CONNECTION_LABEL[connectionStatus]}
+              </span>
+            )}
+            {isGroup && onInviteMember && (
+              <button
+                type="button"
+                aria-label="Invite to group"
+                title="Invite to group"
+                onClick={onInviteMember}
+                className="flex items-center justify-center rounded-full p-2 text-gray-500 dark:text-gray-400 transition-colors hover:bg-black/[0.05] hover:text-gray-700 dark:hover:bg-white/10">
+                <UserPlusIcon className="h-5 w-5" />
+              </button>
+            )}
+          </div>
         </header>
       )}
 
@@ -745,23 +821,27 @@ export function ChatView({
                 <MessageRow
                   message={message}
                   isMine={isMine}
-                  conversation={conversation}
+                  senderName={senderNameOf(message.senderId)}
+                  senderAvatarUrl={senderAvatarOf(message.senderId)}
+                  readReceiptName={conversation ? peerName(conversation) : undefined}
+                  readReceiptAvatarUrl={conversation?.peerAvatarUrl}
                   actions={actions}
                   menuOpen={openMenuId === message.id}
                   onMenuOpenChange={(open) => setOpenMenuId(open ? message.id : null)}
                   selectMode={selectMode}
                   isSelected={selectedIds.has(message.id)}
                   onToggleSelect={toggleSelect}
-                  showReadReceipt={isMine && message.id === lastReadMessageId}
+                  // Read receipts are DM-only; group rooms have no read frames.
+                  showReadReceipt={!isGroup && isMine && message.id === lastReadMessageId}
                 />
               </Fragment>
             );
           })}
 
           {/* Typing indicator — appears as an incoming bubble after the last
-              message while the peer is composing. */}
+              message while the peer (or a fellow group member) is composing. */}
           <AnimatePresence>
-            {isPeerTyping && (
+            {someoneIsTyping && (
               <motion.div
                 initial={{ opacity: 0, y: 8, scale: 0.96 }}
                 animate={{ opacity: 1, y: 0, scale: 1 }}
@@ -769,11 +849,13 @@ export function ChatView({
                 transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                 className="flex origin-bottom-left items-end gap-2">
                 <Avatar
-                  src={resolveAvatarUrl(conversation.peerAvatarUrl)}
-                  name={peerName(conversation)}
+                  src={isGroup ? undefined : resolveAvatarUrl(conversation?.peerAvatarUrl)}
+                  name={isGroup ? typingNames[0] : conversation ? peerName(conversation) : ''}
                   size="small"
                 />
-                <TypingIndicator label={peerName(conversation)} />
+                <TypingIndicator
+                  label={isGroup ? typingNames.join(', ') : conversation ? peerName(conversation) : ''}
+                />
               </motion.div>
             )}
           </AnimatePresence>
@@ -799,7 +881,7 @@ export function ChatView({
                 <span className="w-1 shrink-0 rounded-full bg-[var(--vibe-blue)]" aria-hidden="true" />
                 <div className="min-w-0 flex-1">
                   <p className="text-xs font-semibold text-[var(--vibe-blue)]">
-                    Replying to {replyIsMine ? 'yourself' : peerName(conversation)}
+                    Replying to {replyIsMine ? 'yourself' : senderNameOf(activeReply.senderId)}
                   </p>
                   <p className="truncate text-xs text-gray-500 dark:text-gray-400">{previewText(activeReply.text)}</p>
                 </div>
@@ -830,9 +912,7 @@ export function ChatView({
                 ref={inputRef}
                 type="text"
                 aria-label="Message"
-                placeholder={
-                  activeReply ? 'Type your reply…' : `Message ${peerName(conversation)}`
-                }
+                placeholder={activeReply ? 'Type your reply…' : `Message ${title}`}
                 value={draft}
                 onChange={(event) => {
                   const value = event.target.value;

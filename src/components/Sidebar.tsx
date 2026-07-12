@@ -12,6 +12,7 @@
 import { useEffect, useState } from 'react';
 import { useTheme } from 'next-themes';
 import { Avatar } from '@astryxdesign/core/Avatar';
+import { Badge } from '@astryxdesign/core/Badge';
 import { Divider } from '@astryxdesign/core/Divider';
 import {
   SideNav,
@@ -23,26 +24,35 @@ import { Text } from '@astryxdesign/core/Text';
 import {
   ArrowRightStartOnRectangleIcon,
   Cog6ToothIcon,
+  EnvelopeIcon,
   MagnifyingGlassIcon,
   MoonIcon,
   PlusIcon,
   ShieldCheckIcon,
   SunIcon,
+  UserGroupIcon,
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import { ChevronsLeft } from 'lucide-react';
 import { resolveAvatarUrl, type AuthUser } from '@/lib/api';
 import { peerName, type Conversation } from '@/lib/conversations';
+import type { Group } from '@/lib/groups';
 import type { DashboardView } from './DashboardShell';
 import type { SettingsSection } from './SettingsPanel';
 
 export function Sidebar({
   user,
   conversations,
+  groups,
   activePeerId,
+  activeGroupId,
+  pendingInviteCount,
   onlinePeers,
   onSelectConversation,
+  onSelectGroup,
   onNewChat,
+  onCreateGroup,
+  onInvites,
   onContacts,
   onSettings,
   activeView,
@@ -50,10 +60,17 @@ export function Sidebar({
 }: {
   user: AuthUser | null;
   conversations: Conversation[];
+  groups: Group[];
   activePeerId: string | null;
+  activeGroupId: string | null;
+  // Number of pending group invitations — badges the "Invites" item.
+  pendingInviteCount: number;
   onlinePeers: ReadonlySet<string>;
   onSelectConversation: (peerId: string) => void;
+  onSelectGroup: (groupId: string) => void;
   onNewChat: () => void;
+  onCreateGroup: () => void;
+  onInvites: () => void;
   onContacts: () => void;
   // Swaps the main pane to settings, on the given section. These used to be links to
   // /settings; that route is gone — settings now renders in place beside this nav.
@@ -177,6 +194,36 @@ export function Sidebar({
           onClick={onContacts}
           isSelected={activeView === 'contacts'}
         />
+        <SideNavItem
+          label="Invites"
+          icon={EnvelopeIcon}
+          onClick={onInvites}
+          isSelected={activeView === 'invites'}
+          endContent={
+            pendingInviteCount > 0 ? (
+              <Badge variant="info" label={String(pendingInviteCount)} />
+            ) : undefined
+          }
+        />
+      </SideNavSection>
+      <Divider />
+      <SideNavSection title="Groups">
+        <SideNavItem label="Create group" icon={PlusIcon} onClick={onCreateGroup} />
+        {groups.map((group) => (
+          <SideNavItem
+            key={group.group_id}
+            label={group.name}
+            icon={<Avatar name={group.name} size="tiny" />}
+            isSelected={group.group_id === activeGroupId}
+            onClick={() => onSelectGroup(group.group_id)}
+            endContent={
+              <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
+                <UserGroupIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                {group.members.length}
+              </span>
+            }
+          />
+        ))}
       </SideNavSection>
       <Divider />
       <SideNavSection title="Direct messages">

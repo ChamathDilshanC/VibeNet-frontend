@@ -1,0 +1,118 @@
+// Group chat REST layer: types mirroring the backend DTOs (see the backend's
+// internal/api/groups.go) plus thin apiClient wrappers.
+//
+// Group messages are E2EE under a per-group AES key. Each API shape that hands
+// a group to its member carries THAT member's wrapped copy of the key
+// (wrapped_key/key_nonce) and who wrapped it (wrapped_by) — the member's client
+// derives the pairwise ECDH key with the wrapper and unwraps locally. See
+// src/lib/e2ee.ts for the primitives; DashboardShell owns the unwrap cache.
+
+import { apiClient } from './apiClient';
+
+export interface GroupMember {
+  user_id: string;
+  username: string;
+  display_name: string;
+  avatar_url?: string;
+  role: 'owner' | 'member';
+}
+
+export interface Group {
+  group_id: string;
+  name: string;
+  created_by: string;
+  /** Unix ms. */
+  created_at: number;
+  members: GroupMember[];
+  /** The current user's wrapped copy of the group key (base64 AES-GCM ciphertext). */
+  wrapped_key: string;
+  key_nonce: string;
+  /** Whose public key pairs with ours to unwrap — the creator or our inviter. */
+  wrapped_by: string;
+}
+
+export interface GroupInvite {
+  invite_id: string;
+  group_id: string;
+  group_name: string;
+  from_user_id: string;
+  from_username: string;
+  from_display_name: string;
+  from_avatar_url?: string;
+  /** Unix ms. */
+  created_at: number;
+}
+
+/** One member's encrypted copy of the group key, produced client-side. */
+export interface WrappedKeyInput {
+  wrapped_key: string;
+  key_nonce: string;
+}
+
+// groupRoomId derives the chat room id group history and frames use. The
+// backend derives the same value from the frame's group_id, so a client can
+// never write into a room it wasn't authorized for.
+export function groupRoomId(groupId: string): string {
+  return `group:${groupId}`;
+}
+
+// memberName mirrors peerName's fallback for group rosters: the display name
+// when set, otherwise the username — so bubbles and typing labels never show
+// an empty string. Unknown senders (roster not yet refreshed) get a stub.
+export function memberName(group: Group, userId: string): string {
+  const member = group.members.find((m) => m.user_id === userId);
+  if (!member) return 'Unknown member';
+  return member.display_name.trim() || member.username;
+}
+
+// GET /api/groups — every group the signed-in user belongs to.
+export async function fetchGroups(): Promise<Group[]> {
+  const data = await apiClient.get<{ groups: Group[] }>('/api/groups');
+  return data.groups;
+}
+
+// POST /api/groups/create — creates the group with the caller as owner plus
+// the directly-added members, each entry carrying the key wrapped for them.
+export function createGroup(input: {
+  name: string;
+  selfKey: WrappedKeyInput;
+  members: Array<{ user_id: string } & WrappedKeyInput>;
+}): Promise<Group> {
+  return apiClient.post<Group>('/api/groups/create', {
+    name: input.name,
+    self_key: input.selfKey,
+    members: input.members,
+  });
+}
+
+// POST /api/groups/invite — invites a user by username into one of our groups,
+// with the group key wrapped for them by this client.
+export function inviteToGroup(input: {
+  groupId: string;
+  username: string;
+  key: WrappedKeyInput;
+}): Promise<{ invite_id: string; status: string }> {
+  return apiClient.post<{ invite_id: string; status: string }>('/api/groups/invite', {
+    group_id: input.groupId,
+    username: input.username,
+    wrapped_key: input.key.wrapped_key,
+    key_nonce: input.key.key_nonce,
+  });
+}
+
+// GET /api/invites — the signed-in user's pending group invitations.
+export async function fetchInvites(): Promise<GroupInvite[]> {
+  const data = await apiClient.get<{ invites: GroupInvite[] }>('/api/invites');
+  return data.invites;
+}
+
+// POST /api/invites/accept — joins the group; returns it in full (roster +
+// our wrapped key) so the client can open it immediately.
+export function acceptInvite(inviteId: string): Promise<Group> {
+  return apiClient.post<Group>('/api/invites/accept', { invite_id: inviteId });
+}
+
+// POST /api/invites/decline — dismisses a pending invite.
+export function declineInvite(inviteId: string): Promise<{ status: string }> {
+  return apiClient.post<{ status: string }>('/api/invites/decline', { invite_id: inviteId });
+}

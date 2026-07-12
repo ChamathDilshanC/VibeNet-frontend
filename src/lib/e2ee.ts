@@ -146,6 +146,34 @@ export function deriveSharedKey(
   );
 }
 
+// ── Group keys ──────────────────────────────────────────────────────────────
+// A group chat is encrypted under one symmetric AES-256-GCM key shared by all
+// members. The creator's client generates it, then "wraps" it for each member
+// by encrypting its raw bytes (as base64 text, via encryptText) under the
+// pairwise ECDH key it shares with that member — the same key 1:1 chats use.
+// The server stores only wrapped copies; each member unwraps locally with
+// decryptText + importGroupKeyB64.
+
+// generateGroupKeyB64 mints a fresh group key and returns its raw bytes as
+// base64 — the form that gets wrapped per member and imported for use.
+export async function generateGroupKeyB64(): Promise<string> {
+  const key = await crypto.subtle.generateKey({ name: 'AES-GCM', length: 256 }, true, [
+    'encrypt',
+    'decrypt',
+  ]);
+  const raw = await crypto.subtle.exportKey('raw', key);
+  return bufferToBase64(raw);
+}
+
+// importGroupKeyB64 turns unwrapped raw group-key bytes (base64) back into a
+// usable, non-extractable AES-GCM CryptoKey.
+export function importGroupKeyB64(rawB64: string): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', base64ToBuffer(rawB64), { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ]);
+}
+
 export interface EncryptedPayload {
   ciphertext: string;
   nonce: string;

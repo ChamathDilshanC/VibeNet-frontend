@@ -26,7 +26,29 @@ import {
   upsertConversation,
   type Conversation,
 } from '@/lib/conversations';
-import { decryptText, deriveSharedKey, encryptText, importPublicKey } from '@/lib/e2ee';
+import {
+  decryptText,
+  deriveSharedKey,
+  encryptText,
+  generateGroupKeyB64,
+  getPrivateKeyJwk,
+  importGroupKeyB64,
+  importPublicKey,
+  publicKeyB64FromPrivateJwk,
+} from '@/lib/e2ee';
+import {
+  acceptInvite as acceptInviteApi,
+  createGroup as createGroupApi,
+  declineInvite as declineInviteApi,
+  fetchGroups,
+  fetchInvites,
+  groupRoomId,
+  inviteToGroup,
+  memberName,
+  type Group,
+  type GroupInvite,
+  type WrappedKeyInput,
+} from '@/lib/groups';
 import {
   decodeMessageBody,
   deleteMessage,
@@ -44,18 +66,21 @@ import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
 import { ContactsView } from './ContactsView';
+import { CreateGroupDialog, type SelectedGroupMember } from './CreateGroupDialog';
 import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
+import { InviteMemberDialog, type InviteTarget } from './InviteMemberDialog';
+import { InvitesView } from './InvitesView';
 import { NewChatDialog, type ResolvedPeer } from './NewChatDialog';
 import { PinPromptDialog } from './PinPromptDialog';
 import { SettingsPanel, type SettingsSection } from './SettingsPanel';
 import { Sidebar } from './Sidebar';
 
 // What's showing in the main content pane beside the sidebar. 'chat' covers both an
-// open conversation and the welcome/empty state — settings and contacts are rendered
-// in place of it, Discord-style, so switching to them never tears down the chat shell
-// (socket, conversation registry, derived keys all stay live behind them).
-export type DashboardView = 'chat' | 'contacts' | 'settings';
+// open conversation and the welcome/empty state — settings, contacts, and invites are
+// rendered in place of it, Discord-style, so switching to them never tears down the
+// chat shell (socket, conversation registry, derived keys all stay live behind them).
+export type DashboardView = 'chat' | 'contacts' | 'settings' | 'invites';
 
 // A frame off the WebSocket. `type` discriminates a chat message from the
 // delivery/read control frames (see the backend websocket package); the
@@ -71,10 +96,20 @@ interface InboundFrame {
     | 'typing'
     | 'pin_message'
     | 'delete_message'
-    | 'user_update';
+    | 'user_update'
+    | 'invite_received'
+    | 'group_update';
   message_id?: string;
   sender_id?: string;
   chat_room_id?: string;
+  // Set on group-room message/typing frames — identifies which group to route to.
+  group_id?: string;
+  // invite_received frame: someone invited us to a group.
+  invite_id?: string;
+  group_name?: string;
+  from_name?: string;
+  // group_update frame: `name` is set when we were just added to a new group.
+  name?: string;
   ciphertext?: string;
   nonce?: string;
   timestamp?: number;
@@ -174,9 +209,108 @@ export function DashboardShell({
   // Per-peer auto-clear timers for the typing indicator (see TYPING_TIMEOUT_MS).
   const typingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
+  // ── Group chat state ────────────────────────────────────────────────────
+  const [groups, setGroups] = useState<Group[]>([]);
+  const [invites, setInvites] = useState<GroupInvite[]>([]);
+  const [invitesLoading, setInvitesLoading] = useState(true);
+  // The invite currently being accepted/declined — serialises invite actions.
+  const [busyInviteId, setBusyInviteId] = useState<string | null>(null);
+  // The open group room; mutually exclusive with activePeerId (see openGroup/openPeer).
+  const [activeGroupId, setActiveGroupId] = useState<string | null>(null);
+  const [isCreateGroupOpen, setIsCreateGroupOpen] = useState(false);
+  // Bumped each open so CreateGroupDialog remounts with fresh state (same
+  // pattern as NewChatDialog's session key).
+  const [createGroupSession, setCreateGroupSession] = useState(0);
+  const [isCreatingGroup, setIsCreatingGroup] = useState(false);
+  const [isInviteMemberOpen, setIsInviteMemberOpen] = useState(false);
+  const [isInvitingMember, setIsInvitingMember] = useState(false);
+  // Member IDs currently composing, per group — drives "X is typing…" in the
+  // group header. The DM equivalent is the flat typingPeers set above.
+  const [groupTyping, setGroupTyping] = useState<Record<string, ReadonlySet<string>>>({});
+  // Auto-clear timers for group typing, keyed "<groupId>:<userId>".
+  const groupTypingTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  // Unwrapped group keys, cached per group. rawB64 is kept (in memory only)
+  // because inviting someone requires re-wrapping the raw key for them — the
+  // imported CryptoKey alone is deliberately non-extractable.
+  const groupKeyCache = useRef<Map<string, { key: CryptoKey; rawB64: string }>>(new Map());
+
   // Derived AES-GCM keys are per-peer and deterministic (ECDH) — cache them
   // instead of re-deriving on every message.
   const sharedKeyCache = useRef<Map<string, CryptoKey>>(new Map());
+
+  // ── Group data + key plumbing ───────────────────────────────────────────
+
+  const refreshGroups = useCallback(async () => {
+    if (!user) return;
+    try {
+      setGroups(await fetchGroups());
+    } catch {
+      // Best-effort — the sidebar keeps whatever it last had; retried on the
+      // next reconnect or group_update frame.
+    }
+  }, [user]);
+
+  const refreshInvites = useCallback(async () => {
+    if (!user) return;
+    try {
+      setInvites(await fetchInvites());
+    } catch {
+      // Best-effort, same as groups.
+    } finally {
+      setInvitesLoading(false);
+    }
+  }, [user]);
+
+  // Our own current public key, re-derived from the locally-held private key
+  // (not user.public_key, which can lag behind a self-healed keypair).
+  const getOwnPublicKeyB64 = useCallback(async (): Promise<string> => {
+    if (!user) throw new Error('Not signed in.');
+    const jwk = getPrivateKeyJwk(user.user_id, user.username);
+    if (!jwk) throw new Error('Encryption keys are not ready yet.');
+    return publicKeyB64FromPrivateJwk(jwk);
+  }, [user]);
+
+  // The pairwise AES key between this device and a peer's public key — used
+  // to wrap/unwrap group keys, exactly like DM message encryption.
+  const derivePairwiseKey = useCallback(
+    async (peerPublicKeyB64: string): Promise<CryptoKey> => {
+      if (keyState.status !== 'ready') throw new Error('Encryption keys are not ready yet.');
+      const theirPublicKey = await importPublicKey(peerPublicKeyB64);
+      return deriveSharedKey(keyState.privateKey, theirPublicKey);
+    },
+    [keyState],
+  );
+
+  // Unwraps (and caches) a group's key from our own wrapped copy: derive the
+  // pairwise key with whoever wrapped it for us — ourselves for groups we
+  // created, the inviter for groups we joined — then decrypt the raw key.
+  const getGroupKey = useCallback(
+    async (group: Group): Promise<{ key: CryptoKey; rawB64: string } | null> => {
+      if (keyState.status !== 'ready' || !user) return null;
+      const cached = groupKeyCache.current.get(group.group_id);
+      if (cached) return cached;
+      try {
+        const wrapperPublicKeyB64 =
+          group.wrapped_by === user.user_id
+            ? await getOwnPublicKeyB64()
+            : (
+                await apiClient.get<{ public_key: string }>(
+                  `/api/users/${group.wrapped_by}/key`,
+                )
+              ).public_key;
+        const pairwise = await derivePairwiseKey(wrapperPublicKeyB64);
+        const rawB64 = await decryptText(pairwise, group.wrapped_key, group.key_nonce);
+        const entry = { key: await importGroupKeyB64(rawB64), rawB64 };
+        groupKeyCache.current.set(group.group_id, entry);
+        return entry;
+      } catch {
+        // Wrong pairwise key (the wrapper rotated their keypair since wrapping,
+        // or we lost ours) — group messages stay unreadable on this device.
+        return null;
+      }
+    },
+    [keyState, user, getOwnPublicKeyB64, derivePairwiseKey],
+  );
 
   const getSharedKey = useCallback(
     async (peer: Conversation): Promise<CryptoKey | null> => {
@@ -424,6 +558,47 @@ export function DashboardShell({
       if (frame.type === 'typing') {
         const sender = frame.sender_id;
         if (!sender) return;
+
+        // Group room: track per-group WHO is composing (several members can
+        // type at once), with the same heartbeat/auto-clear contract as DMs.
+        if (frame.group_id) {
+          const groupId = frame.group_id;
+          const timerKey = `${groupId}:${sender}`;
+          const timers = groupTypingTimersRef.current;
+          const existing = timers.get(timerKey);
+          if (existing) clearTimeout(existing);
+
+          const clearGroupTyping = () =>
+            setGroupTyping((prev) => {
+              const current = prev[groupId];
+              if (!current || !current.has(sender)) return prev;
+              const next = new Set(current);
+              next.delete(sender);
+              return { ...prev, [groupId]: next };
+            });
+
+          if (frame.is_typing) {
+            setGroupTyping((prev) => {
+              const current = prev[groupId];
+              if (current?.has(sender)) return prev;
+              const next = new Set(current ?? []);
+              next.add(sender);
+              return { ...prev, [groupId]: next };
+            });
+            timers.set(
+              timerKey,
+              setTimeout(() => {
+                timers.delete(timerKey);
+                clearGroupTyping();
+              }, TYPING_TIMEOUT_MS),
+            );
+          } else {
+            timers.delete(timerKey);
+            clearGroupTyping();
+          }
+          return;
+        }
+
         const timers = typingTimersRef.current;
         const existing = timers.get(sender);
         if (existing) clearTimeout(existing);
@@ -525,6 +700,30 @@ export function DashboardShell({
         return;
       }
 
+      // Someone invited us to a group: refresh the invites list (badge + view)
+      // and toast so it's noticeable without watching the sidebar.
+      if (frame.type === 'invite_received') {
+        void refreshInvites();
+        gooeyToast(
+          frame.group_name
+            ? `${frame.from_name || 'Someone'} invited you to "${frame.group_name}"`
+            : 'New group invitation',
+          { description: 'Open Invites in the sidebar to accept.' },
+        );
+        return;
+      }
+
+      // Group membership changed: we were added to a group (name present), or a
+      // group we're in gained a member. Refetch rather than patch — the list is
+      // small and the payload deliberately minimal.
+      if (frame.type === 'group_update') {
+        void refreshGroups();
+        if (frame.name) {
+          gooeyToast(`You were added to "${frame.name}"`);
+        }
+        return;
+      }
+
       // Profile update broadcast: a peer changed their real name / avatar. Patch
       // the cached conversation so the DM list, chat header, and bubbles update
       // live — no reload needed. Only touches peers we actually have a chat with.
@@ -555,6 +754,47 @@ export function DashboardShell({
       // dropping the frame for good.
       if (keyState.status !== 'ready') {
         pendingFramesRef.current.push(frame);
+        return;
+      }
+
+      // Group-room message: decrypt under the group key instead of a pairwise
+      // key. An unknown group id means we were added after the last fetch —
+      // refetch and let the room's history sync recover the message on open.
+      if (frame.group_id) {
+        const groupId = frame.group_id;
+        void (async () => {
+          const group = groups.find((g) => g.group_id === groupId);
+          if (!group) {
+            void refreshGroups();
+            return;
+          }
+          const entry = await getGroupKey(group);
+          if (!entry) return;
+          try {
+            const plaintext = await decryptText(entry.key, ciphertext, nonce);
+            const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+            recordMessage(chatRoomId, {
+              id: messageId,
+              senderId,
+              text,
+              timestamp: timestamp ?? Date.now(),
+              isForwarded: isForwarded ?? frameForwarded,
+              replyTo,
+            });
+            // A message from them supersedes their typing state — clear it now
+            // rather than waiting out the timeout.
+            setGroupTyping((prev) => {
+              const current = prev[groupId];
+              if (!current || !current.has(senderId)) return prev;
+              const next = new Set(current);
+              next.delete(senderId);
+              return { ...prev, [groupId]: next };
+            });
+          } catch {
+            // Undecryptable — wrong group key generation; drop rather than
+            // show ciphertext.
+          }
+        })();
         return;
       }
 
@@ -617,7 +857,7 @@ export function DashboardShell({
         }
       })();
     },
-    [conversations, decryptIncoming, keyState.status, user],
+    [conversations, decryptIncoming, keyState.status, user, groups, getGroupKey, refreshGroups, refreshInvites],
   );
 
   // Replay anything that arrived while keys were still being set up.
@@ -630,12 +870,32 @@ export function DashboardShell({
 
   const { status: connectionStatus, send } = useChatSocket(handleIncoming);
 
+  // Load groups + invites on sign-in and again on every reconnect — a
+  // group_update/invite_received frame pushed while this device was offline
+  // is gone for good, so the reconnect refetch is what heals the gap.
+  useEffect(() => {
+    if (!user || connectionStatus !== 'open') return;
+    void (async () => {
+      await refreshGroups();
+      await refreshInvites();
+    })();
+  }, [user, connectionStatus, refreshGroups, refreshInvites]);
+
   // openPeer opens an existing conversation immediately — sidebar DM rows and
   // the empty-state "Recent chats" list use this path and never trigger the PIN gate.
   const openPeer = useCallback((peerId: string) => {
     if (!peerId) return;
     setActiveView('chat');
     setActivePeerId(peerId);
+    setActiveGroupId(null);
+  }, []);
+
+  // openGroup opens a group room; a DM and a group are never active together.
+  const openGroup = useCallback((groupId: string) => {
+    if (!groupId) return;
+    setActiveView('chat');
+    setActiveGroupId(groupId);
+    setActivePeerId(null);
   }, []);
 
   // Opens settings in the main pane, optionally on a specific section — the sidebar's
@@ -657,6 +917,7 @@ export function DashboardShell({
     );
     setActiveView('chat');
     setActivePeerId(conversation.peerId);
+    setActiveGroupId(null);
   }, []);
 
   async function submitChatPin(code: string) {
@@ -716,6 +977,177 @@ export function DashboardShell({
     });
   }
 
+  // ── Group actions ───────────────────────────────────────────────────────
+
+  // Wraps the raw group key for one recipient: pairwise ECDH key, then the
+  // same AES-GCM encrypt used for message bodies. What leaves this function
+  // is safe to hand to the server.
+  const wrapGroupKeyFor = useCallback(
+    async (rawB64: string, recipientPublicKeyB64: string): Promise<WrappedKeyInput> => {
+      const pairwise = await derivePairwiseKey(recipientPublicKeyB64);
+      const { ciphertext, nonce } = await encryptText(pairwise, rawB64);
+      return { wrapped_key: ciphertext, key_nonce: nonce };
+    },
+    [derivePairwiseKey],
+  );
+
+  // Creates the group: mint a group key, wrap it for ourselves and every
+  // directly-added member, then hand the wrapped copies to the API. The raw
+  // key never leaves this device unencrypted.
+  async function handleCreateGroup(name: string, members: SelectedGroupMember[]) {
+    if (!user) return;
+    setIsCreatingGroup(true);
+    try {
+      const rawB64 = await generateGroupKeyB64();
+      const selfKey = await wrapGroupKeyFor(rawB64, await getOwnPublicKeyB64());
+      const memberInputs: Array<{ user_id: string } & WrappedKeyInput> = [];
+      for (const member of members) {
+        const resolved = await apiClient.get<{ public_key: string }>(
+          `/api/users/${member.userId}/key`,
+        );
+        memberInputs.push({
+          user_id: member.userId,
+          ...(await wrapGroupKeyFor(rawB64, resolved.public_key)),
+        });
+      }
+
+      const group = await createGroupApi({ name, selfKey, members: memberInputs });
+      // We already hold the raw key — cache it so the first send needs no unwrap.
+      groupKeyCache.current.set(group.group_id, {
+        key: await importGroupKeyB64(rawB64),
+        rawB64,
+      });
+      setGroups((prev) => [group, ...prev.filter((g) => g.group_id !== group.group_id)]);
+      setIsCreateGroupOpen(false);
+      openGroup(group.group_id);
+      gooeyToast(`Group "${group.name}" created`);
+    } catch (err) {
+      gooeyToast('Could not create group', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsCreatingGroup(false);
+    }
+  }
+
+  // Invites a user into the open group: unwrap our copy of the group key,
+  // re-wrap it for the invitee, and send the invitation.
+  async function handleInviteMember(target: InviteTarget) {
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!user || !group) return;
+    setIsInvitingMember(true);
+    try {
+      const entry = await getGroupKey(group);
+      if (!entry) throw new Error('The group key is not available on this device.');
+      const resolved = await apiClient.get<{ public_key: string }>(
+        `/api/users/${target.userId}/key`,
+      );
+      const key = await wrapGroupKeyFor(entry.rawB64, resolved.public_key);
+      await inviteToGroup({ groupId: group.group_id, username: target.username, key });
+      setIsInviteMemberOpen(false);
+      gooeyToast(`Invite sent to ${target.displayName ?? target.username}`);
+    } catch (err) {
+      gooeyToast('Could not send invite', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setIsInvitingMember(false);
+    }
+  }
+
+  // Accepting drops the user straight into the group — it appears in the
+  // sidebar and opens immediately, no extra step.
+  async function handleAcceptInvite(invite: GroupInvite) {
+    setBusyInviteId(invite.invite_id);
+    try {
+      const group = await acceptInviteApi(invite.invite_id);
+      setInvites((prev) => prev.filter((i) => i.invite_id !== invite.invite_id));
+      setGroups((prev) => [group, ...prev.filter((g) => g.group_id !== group.group_id)]);
+      openGroup(group.group_id);
+      gooeyToast(`Joined "${group.name}"`);
+    } catch (err) {
+      gooeyToast('Could not accept invite', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setBusyInviteId(null);
+    }
+  }
+
+  async function handleDeclineInvite(invite: GroupInvite) {
+    setBusyInviteId(invite.invite_id);
+    try {
+      await declineInviteApi(invite.invite_id);
+      setInvites((prev) => prev.filter((i) => i.invite_id !== invite.invite_id));
+    } catch (err) {
+      gooeyToast('Could not decline invite', {
+        description: err instanceof Error ? err.message : undefined,
+      });
+    } finally {
+      setBusyInviteId(null);
+    }
+  }
+
+  // Catches a group room up on messages sent while this device wasn't
+  // connected — the group analogue of syncHistory, decrypting under the group
+  // key instead of a pairwise key.
+  const syncGroupHistory = useCallback(
+    async (group: Group) => {
+      try {
+        const entry = await getGroupKey(group);
+        if (!entry) return;
+        const roomId = groupRoomId(group.group_id);
+
+        const { messages: remote } = await apiClient.get<{ messages: RemoteMessageDTO[] }>(
+          `/api/messages/${encodeURIComponent(roomId)}`,
+        );
+        if (remote.length === 0) return;
+
+        const alreadyHave = new Set(getMessages(roomId).map((m) => m.id));
+        const pending = remote.filter((m) => !alreadyHave.has(m.message_id));
+        if (pending.length === 0) return;
+
+        const decrypted: ChatMessage[] = [];
+        for (const m of pending) {
+          try {
+            const plaintext = await decryptText(entry.key, m.ciphertext, m.nonce);
+            const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+            decrypted.push({
+              id: m.message_id,
+              senderId: m.sender_id,
+              text,
+              timestamp: m.timestamp,
+              replyTo,
+              isForwarded,
+            });
+          } catch {
+            // Encrypted under a key generation this device can't recover — skip.
+          }
+        }
+        if (decrypted.length === 0) return;
+
+        const merged = mergeMessages(roomId, decrypted);
+        setMessagesByRoom((prev) => ({ ...prev, [roomId]: merged }));
+      } catch {
+        // Network/auth failure — live delivery still works without history.
+      }
+    },
+    [getGroupKey],
+  );
+
+  // Group counterpart of the DM history-resync effect below: runs when a group
+  // is opened, when the socket reconnects while one is open, and again once
+  // E2EE keys finish setting up (the first open can race key generation).
+  useEffect(() => {
+    if (connectionStatus !== 'open' || !activeGroupId) return;
+    const group = groups.find((g) => g.group_id === activeGroupId);
+    if (!group) return;
+    void (async () => {
+      await syncGroupHistory(group);
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on open/reconnect/keys-ready only; `groups`/`syncGroupHistory` identity churn would only repeat work.
+  }, [connectionStatus, activeGroupId, keyState.status]);
+
   // Fetches history whenever the active conversation changes (new chat
   // started, or an existing one selected from the sidebar) and again if the
   // connection drops and reconnects while a conversation is open — otherwise
@@ -734,8 +1166,59 @@ export function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- resync on reconnect only; re-running for every unrelated `conversations`/`syncHistory` identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeerId]);
 
+  // Encrypts under the group key and sends a group-room frame — the backend
+  // fans it out to every member and persists it once under "group:<id>".
+  async function handleSendGroup(group: Group, text: string, replyTo?: ReplyPreview) {
+    if (!user) return;
+    setIsSending(true);
+    setSendError(null);
+    try {
+      const entry = await getGroupKey(group);
+      if (!entry) throw new Error('Encryption keys are not ready yet.');
+
+      const { ciphertext, nonce } = await encryptText(
+        entry.key,
+        encodeMessageBody(text, { replyTo }),
+      );
+      const messageId = crypto.randomUUID();
+      const timestamp = Date.now();
+      const roomId = groupRoomId(group.group_id);
+
+      const enqueued = send({
+        type: 'message',
+        message_id: messageId,
+        group_id: group.group_id,
+        chat_room_id: roomId,
+        ciphertext,
+        nonce,
+        timestamp,
+      });
+      if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
+
+      // Single tick optimistically; the hub's ack (queued to ≥1 member)
+      // upgrades it to a double tick. Group rooms have no read receipts.
+      recordMessage(roomId, {
+        id: messageId,
+        senderId: user.user_id,
+        text,
+        timestamp,
+        status: 'sent',
+        replyTo,
+      });
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send message.');
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   async function handleSend(text: string, replyTo?: ReplyPreview) {
     if (!user) return;
+    if (activeGroupId) {
+      const group = groups.find((g) => g.group_id === activeGroupId);
+      if (group) await handleSendGroup(group, text, replyTo);
+      return;
+    }
     const conversation = conversations.find((c) => c.peerId === activePeerId);
     if (!conversation) return;
 
@@ -783,12 +1266,13 @@ export function DashboardShell({
   }
 
   // ── Per-message actions (surfaced by ChatView's context menu) ──────────────
-  // These operate on the open conversation's room: ChatView only renders the
-  // active conversation, so every message it hands back belongs to it.
+  // These operate on the open room — DM or group alike (activeRoomId resolves
+  // to whichever is active): ChatView only renders the active room, so every
+  // message it hands back belongs to it.
 
   function handleTogglePin(message: ChatMessage) {
-    if (!activeConversation) return;
-    const room = activeConversation.chatRoomId;
+    if (!activeRoomId) return;
+    const room = activeRoomId;
     const nextPinned = !message.pinned;
     const updated = setMessagePinned(room, message.id, nextPinned);
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
@@ -803,8 +1287,8 @@ export function DashboardShell({
   }
 
   function handleToggleKeep(message: ChatMessage) {
-    if (!activeConversation) return;
-    const room = activeConversation.chatRoomId;
+    if (!activeRoomId) return;
+    const room = activeRoomId;
     const nextKept = !message.kept;
     const updated = setMessageKept(room, message.id, nextKept);
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
@@ -812,15 +1296,15 @@ export function DashboardShell({
   }
 
   function handleDeleteForMe(message: ChatMessage) {
-    if (!activeConversation) return;
-    const room = activeConversation.chatRoomId;
+    if (!activeRoomId) return;
+    const room = activeRoomId;
     const updated = deleteMessage(room, message.id);
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
   }
 
   function handleDeleteForEveryone(message: ChatMessage) {
-    if (!activeConversation) return;
-    const room = activeConversation.chatRoomId;
+    if (!activeRoomId) return;
+    const room = activeRoomId;
     const updated = deleteMessage(room, message.id);
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
     // Ask the hub to broadcast the deletion (and drop it from DynamoDB).
@@ -882,9 +1366,22 @@ export function DashboardShell({
     }
   }
 
-  const activeConversation = conversations.find((c) => c.peerId === activePeerId) ?? null;
-  const activeMessages = activeConversation
-    ? (messagesByRoom[activeConversation.chatRoomId] ?? getMessages(activeConversation.chatRoomId))
+  const activeGroup = groups.find((g) => g.group_id === activeGroupId) ?? null;
+  const activeConversation = activeGroup
+    ? null
+    : (conversations.find((c) => c.peerId === activePeerId) ?? null);
+  // The open room's id, whichever kind is active — what the per-message
+  // actions and the message list key off.
+  const activeRoomId = activeGroup
+    ? groupRoomId(activeGroup.group_id)
+    : (activeConversation?.chatRoomId ?? null);
+  const activeMessages = activeRoomId
+    ? (messagesByRoom[activeRoomId] ?? getMessages(activeRoomId))
+    : [];
+  // Roster names of the members composing in the open group, for the header
+  // and the typing bubble. Never includes ourselves (the hub excludes senders).
+  const activeGroupTypingNames = activeGroup
+    ? [...(groupTyping[activeGroup.group_id] ?? [])].map((id) => memberName(activeGroup, id))
     : [];
 
   // While a conversation is open, tell the peer we've read their messages so
@@ -915,12 +1412,15 @@ export function DashboardShell({
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-subscribing on its identity change would needlessly reset the poll.
   }, [connectionStatus, peerIdsKey]);
 
-  // Clear any pending typing auto-clear timers on unmount.
+  // Clear any pending typing auto-clear timers (DM and group) on unmount.
   useEffect(() => {
     const timers = typingTimersRef.current;
+    const groupTimers = groupTypingTimersRef.current;
     return () => {
       timers.forEach((t) => clearTimeout(t));
       timers.clear();
+      groupTimers.forEach((t) => clearTimeout(t));
+      groupTimers.clear();
     };
   }, []);
 
@@ -936,13 +1436,22 @@ export function DashboardShell({
         <Sidebar
           user={user}
           conversations={conversations}
+          groups={groups}
           activePeerId={activePeerId}
+          activeGroupId={activeGroupId}
+          pendingInviteCount={invites.length}
           onlinePeers={visibleOnlinePeers}
           onSelectConversation={openPeer}
+          onSelectGroup={openGroup}
           onNewChat={() => {
             setNewChatSession((n) => n + 1);
             setIsNewChatOpen(true);
           }}
+          onCreateGroup={() => {
+            setCreateGroupSession((n) => n + 1);
+            setIsCreateGroupOpen(true);
+          }}
+          onInvites={() => setActiveView('invites')}
           onContacts={() => setActiveView('contacts')}
           onSettings={openSettings}
           activeView={activeView}
@@ -966,6 +1475,39 @@ export function DashboardShell({
             setNewChatSession((n) => n + 1);
             setIsNewChatOpen(true);
           }}
+        />
+      ) : activeView === 'invites' ? (
+        <InvitesView
+          invites={invites}
+          isLoading={invitesLoading}
+          busyInviteId={busyInviteId}
+          onAccept={(invite) => void handleAcceptInvite(invite)}
+          onDecline={(invite) => void handleDeclineInvite(invite)}
+        />
+      ) : activeGroup ? (
+        <ChatView
+          group={activeGroup}
+          messages={activeMessages}
+          myUserId={user?.user_id ?? ''}
+          onSend={handleSend}
+          isSending={isSending}
+          sendError={sendError}
+          connectionStatus={connectionStatus}
+          typingNames={activeGroupTypingNames}
+          onTyping={(isTyping) =>
+            send({
+              type: 'typing',
+              group_id: activeGroup.group_id,
+              chat_room_id: groupRoomId(activeGroup.group_id),
+              is_typing: isTyping,
+            })
+          }
+          onInviteMember={() => setIsInviteMemberOpen(true)}
+          onForward={setForwardingMessage}
+          onTogglePin={handleTogglePin}
+          onToggleKeep={handleToggleKeep}
+          onDeleteForMe={handleDeleteForMe}
+          onDeleteForEveryone={handleDeleteForEveryone}
         />
       ) : activeConversation ? (
         <ChatView
@@ -1025,6 +1567,29 @@ export function DashboardShell({
           onOpenChange={setIsNewChatOpen}
           currentUserId={user.user_id}
           onStart={handleStartConversation}
+        />
+      )}
+
+      {user && (
+        <CreateGroupDialog
+          key={createGroupSession}
+          isOpen={isCreateGroupOpen}
+          onOpenChange={setIsCreateGroupOpen}
+          currentUserId={user.user_id}
+          isCreating={isCreatingGroup}
+          onCreate={(name, members) => void handleCreateGroup(name, members)}
+        />
+      )}
+
+      {user && (
+        <InviteMemberDialog
+          // Remount per group so a previous search doesn't leak across rooms.
+          key={activeGroupId ?? 'no-group'}
+          isOpen={isInviteMemberOpen}
+          onOpenChange={setIsInviteMemberOpen}
+          group={activeGroup}
+          isInviting={isInvitingMember}
+          onInvite={(target) => void handleInviteMember(target)}
         />
       )}
 
