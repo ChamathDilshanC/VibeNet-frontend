@@ -1077,6 +1077,19 @@ export function DashboardShell({
       setIsCreateGroupOpen(false);
       openGroup(group.group_id);
       gooeyToast(`Group "${group.name}" created`);
+
+      // Activity log: creation, then each directly-added member — these
+      // members never go through the invite/accept flow (that's where
+      // "X joined the group" comes from), so without this they'd have no
+      // record of how they ended up in the group at all.
+      const creatorName = user.display_name || user.username;
+      await sendGroupSystemMessage(group, `${creatorName} created the group`);
+      for (const member of members) {
+        await sendGroupSystemMessage(
+          group,
+          `${creatorName} added ${member.displayName ?? member.username} to the group`,
+        );
+      }
     } catch (err) {
       gooeyToast('Could not create group', {
         description: err instanceof Error ? err.message : undefined,
