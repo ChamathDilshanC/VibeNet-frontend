@@ -38,6 +38,7 @@ import {
   Check,
   ChevronRight,
   Cloud,
+  Copy,
   LogOut,
   Mail,
   Moon,
@@ -548,77 +549,141 @@ function SecurityPanel({
     }
   }
 
+  async function copyPin() {
+    if (!status?.pin) return;
+    try {
+      await navigator.clipboard.writeText(status.pin);
+      gooeyToast.success('PIN copied to clipboard.');
+    } catch {
+      gooeyToast.error('Could not copy — your browser blocked clipboard access.');
+    }
+  }
+
+  // 5-minute window, drained as a slim progress bar rather than plain "M:SS" text.
+  const ROTATING_WINDOW_SECONDS = 300;
+  const progressPct = expiry
+    ? Math.max(0, Math.min(100, (remaining / ROTATING_WINDOW_SECONDS) * 100))
+    : 0;
+
   return (
-    <VStack gap={6}>
-      {/* Master toggle card. */}
-      <SettingsCard>
-        <div className="flex items-start gap-4">
-          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-[color:var(--vibe-blue)]/10 text-[color:var(--vibe-blue)]">
-            <ShieldCheckIcon className="h-6 w-6" />
-          </span>
-          <div className="flex-1">
-            <Switch
-              label="Enable Chat PIN Verification"
-              description="Strangers must enter your current PIN before they can message you — your defence against spam."
-              value={enabled}
-              onChange={setEnabled}
-            />
-          </div>
+    <VStack gap={8}>
+      {/* Master toggle — a soft, borderless tint that now spans the full row width,
+          with the switch pinned to the far right (labelSpacing="spread") instead of
+          hugging the label like a narrow, cramped control. */}
+      <div className="flex w-full items-center gap-4 rounded-2xl bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out hover:bg-gray-100/80 dark:bg-white/[0.03] dark:hover:bg-white/[0.05]">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[color:var(--vibe-blue)]/25 to-[color:var(--vibe-blue)]/5 text-[color:var(--vibe-blue)]">
+          <ShieldCheckIcon className="h-6 w-6" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <Switch
+            label="Enable Chat PIN Verification"
+            description="Strangers must enter your current PIN before they can message you — your defence against spam."
+            value={enabled}
+            onChange={setEnabled}
+            width="100%"
+            labelSpacing="spread"
+          />
         </div>
-      </SettingsCard>
+      </div>
 
-      {/* Configuration card — only meaningful while enabled. */}
+      {/* Configuration — only meaningful while enabled, separated by a hairline
+          rather than a second boxed card. */}
       {enabled && (
-        <SettingsCard>
-          <VStack gap={5}>
-            <VStack gap={1}>
-              <Heading level={2}>PIN mode</Heading>
-              <Text type="supporting" color="secondary">
-                Choose how your PIN is generated.
-              </Text>
-            </VStack>
+        <VStack gap={5}>
+          <div className="h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent dark:via-gray-800" />
 
+          <VStack gap={1}>
+            <Heading level={2}>PIN mode</Heading>
+            <Text type="supporting" color="secondary">
+              Choose how your PIN is generated.
+            </Text>
+          </VStack>
+
+          {/* Wrapped in the same soft tint as the master toggle row, so the two
+              controls read as one consistent design language — and stretched to
+              fill the full row (layout="fill") instead of a small hugging pill. */}
+          <div className="w-full rounded-2xl bg-gray-50/80 p-2 transition-colors duration-300 ease-in-out dark:bg-white/[0.03]">
             <SegmentedControl
               value={type}
               onChange={(v) => setType(v as 'rotating' | 'static')}
               label="PIN mode"
+              layout="fill"
+              size="lg"
             >
               <SegmentedControlItem value="rotating" label="5-Minute Rotating PIN" />
               <SegmentedControlItem value="static" label="Custom Static PIN" />
             </SegmentedControl>
+          </div>
 
-            {type === 'rotating' ? (
-              <div className="rounded-2xl border border-gray-200 bg-gray-50 p-5 text-center transition-colors duration-300 ease-in-out dark:border-gray-800 dark:bg-gray-950/50">
+          {type === 'rotating' ? (
+            // Glowing, borderless code display: a soft brand-gradient wash with two
+            // blurred glow blobs behind it, rather than a flat bordered box.
+            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[color:var(--vibe-blue)]/[0.07] via-transparent to-[color:var(--vibe-green)]/[0.05] p-8 text-center transition-colors duration-300 ease-in-out">
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -top-16 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-[color:var(--vibe-blue)]/20 blur-3xl"
+              />
+              <div
+                aria-hidden
+                className="pointer-events-none absolute -bottom-16 right-1/4 h-40 w-40 rounded-full bg-[color:var(--vibe-green)]/15 blur-3xl"
+              />
+
+              <div className="relative">
                 <Text type="supporting" color="secondary">
                   Your current code — it changes every 5 minutes.
                 </Text>
-                <div className="mt-2 font-mono text-3xl font-semibold tracking-[0.3em] text-gray-900 dark:text-white">
-                  {status?.pin ?? '••••••'}
+
+                <div className="mt-3 flex items-center justify-center gap-2">
+                  <span className="font-mono text-4xl font-bold tracking-[0.32em] text-gray-900 dark:text-white">
+                    {status?.pin ?? '••••••'}
+                  </span>
+                  {status?.pin && (
+                    <button
+                      type="button"
+                      onClick={() => void copyPin()}
+                      aria-label="Copy PIN"
+                      title="Copy PIN"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-400 outline-none transition-colors duration-200 hover:bg-black/5 hover:text-[color:var(--vibe-blue)] focus-visible:ring-2 focus-visible:ring-[color:var(--vibe-blue)] dark:text-gray-500 dark:hover:bg-white/10"
+                    >
+                      <Copy className="h-4 w-4" strokeWidth={1.75} />
+                    </button>
+                  )}
                 </div>
+
                 {remaining > 0 && (
-                  <Text type="supporting" color="secondary">
-                    Refreshes in {mmss(remaining)}
-                  </Text>
+                  <div className="mx-auto mt-5 max-w-[220px]">
+                    <div className="h-1.5 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
+                      <motion.div
+                        className="h-full rounded-full"
+                        style={{ background: 'var(--vibe-gradient)' }}
+                        animate={{ width: `${progressPct}%` }}
+                        transition={{ duration: 0.6, ease: 'easeOut' }}
+                      />
+                    </div>
+                    <Text type="supporting" color="secondary" className="mt-2 block">
+                      Refreshes in {mmss(remaining)}
+                    </Text>
+                  </div>
                 )}
               </div>
-            ) : (
-              <VStack gap={3}>
-                <Text type="supporting" color="secondary">
-                  {wasStatic
-                    ? 'Enter a new 6-digit PIN to change it, or leave blank to keep your current one.'
-                    : 'Set a 6-digit PIN you can share with people you want to reach you.'}
-                </Text>
-                <PinInput
-                  value={customPin}
-                  onChange={setCustomPin}
-                  masked
-                  length={6}
-                  ariaLabel="Custom PIN"
-                />
-              </VStack>
-            )}
-          </VStack>
-        </SettingsCard>
+            </div>
+          ) : (
+            <VStack gap={3}>
+              <Text type="supporting" color="secondary">
+                {wasStatic
+                  ? 'Enter a new 6-digit PIN to change it, or leave blank to keep your current one.'
+                  : 'Set a 6-digit PIN you can share with people you want to reach you.'}
+              </Text>
+              <PinInput
+                value={customPin}
+                onChange={setCustomPin}
+                masked
+                length={6}
+                ariaLabel="Custom PIN"
+              />
+            </VStack>
+          )}
+        </VStack>
       )}
 
       <div className="flex justify-end">
@@ -926,7 +991,10 @@ export function SettingsPanel({
       )}
 
       {!isProfile && (
-        <div className="max-w-4xl px-6 py-8 sm:px-8">
+        // Full width rather than a capped reading measure: these sections are
+        // controls and cards, not prose, so they should use the space the split
+        // layout actually gives them instead of leaving the pane half-empty.
+        <div className="w-full px-6 py-8 sm:px-8">
           <VStack gap={6}>
             {backLink}
             <Heading level={1} type={isNarrow ? undefined : 'display-3'}>
