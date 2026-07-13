@@ -8,7 +8,7 @@
 
 'use client';
 
-import { useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { gooeyToast } from 'goey-toast';
@@ -18,7 +18,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { AuthShell } from '@/components/AuthShell';
 import { GoogleButton } from '@/components/GoogleButton';
 import { register, ApiError } from '@/lib/api';
-import { saveSession } from '@/lib/session';
+import { saveSession, getToken } from '@/lib/session';
 import { generateKeyPair, storePrivateKey } from '@/lib/e2ee';
 
 const MIN_PASSWORD = 8;
@@ -43,6 +43,11 @@ export default function RegisterPage() {
   // them inline on the offending field. Cleared as soon as that field is edited.
   const [emailError, setEmailError] = useState<string | undefined>();
   const [phoneError, setPhoneError] = useState<string | undefined>();
+
+  // Already signed in (existing token) — skip the form and go straight in.
+  useEffect(() => {
+    if (getToken()) router.replace('/dashboard');
+  }, [router]);
 
   // Field-level validation shown inline under the password inputs.
   const passwordStatus =

@@ -16,7 +16,7 @@ import { Text } from '@astryxdesign/core/Text';
 import { AuthShell } from '@/components/AuthShell';
 import { GoogleButton } from '@/components/GoogleButton';
 import { login, ApiError } from '@/lib/api';
-import { saveSession } from '@/lib/session';
+import { saveSession, getToken } from '@/lib/session';
 
 // Surfaces a deactivated/deleted-account rejection bounced back from the Google
 // OAuth callback (see GoogleCallback's loginBlockedReason redirect to
@@ -39,6 +39,11 @@ export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Already signed in (existing token) — skip the form and go straight in.
+  useEffect(() => {
+    if (getToken()) router.replace('/dashboard');
+  }, [router]);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();

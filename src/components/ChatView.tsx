@@ -911,6 +911,11 @@ export function ChatView({
       : null;
   const someoneIsTyping = isGroup ? groupTypingLabel !== null : isPeerTyping;
 
+  // Group subtitle: every member's real name in one line — the header's
+  // `truncate` class ellipsizes it rather than wrapping or growing the row.
+  const groupMemberNamesLabel =
+    isGroup && group ? group.members.map((m) => memberName(group, m.user_id)).join(', ') : '';
+
   // Typing-notify bookkeeping: `typingActiveRef` tracks whether we've told the
   // peer we're typing (so we send "true" once, not per keystroke); the idle timer
   // sends "false" after a short pause. onTyping is read through a ref so these
@@ -1145,8 +1150,7 @@ export function ChatView({
                       </span>
                     ) : (
                       <span className="truncate text-xs text-gray-500 dark:text-gray-400">
-                        {group!.members.length}{' '}
-                        {group!.members.length === 1 ? 'member' : 'members'}
+                        {groupMemberNamesLabel}
                       </span>
                     )
                   ) : /* Account status takes over the line entirely — a deactivated/deleted

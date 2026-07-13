@@ -11,10 +11,12 @@
 
 'use client';
 
+import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { Text } from '@astryxdesign/core/Text';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
+import { getToken } from '@/lib/session';
 
 // ─── Image Data ─────────────────────────────────────────────────────────────
 // Curated, high-resolution collage served from /public/gallery.
@@ -72,6 +74,13 @@ function ImageGrid() {
 
 export default function Home() {
   const router = useRouter();
+
+  // A signed-in visitor (existing token in localStorage — persists across tabs
+  // and reloads) landing on "/" fresh, e.g. a new tab, should go straight to
+  // their chats rather than see the logged-out marketing page.
+  useEffect(() => {
+    if (getToken()) router.replace('/dashboard');
+  }, [router]);
 
   return (
     <main className="mx-auto w-full max-w-7xl flex-1 px-6 pt-24 pb-16 md:pt-32 lg:px-8">
