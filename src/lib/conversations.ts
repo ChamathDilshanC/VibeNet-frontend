@@ -8,6 +8,9 @@
 
 const STORAGE_PREFIX = 'vibenet:conversations:';
 
+/** Peer account lifecycle state, mirrored from the backend's userSummary/publicKeyResponse. */
+export type PeerStatus = 'active' | 'deactivated' | 'deleted';
+
 export interface Conversation {
   peerId: string;
   peerUsername: string;
@@ -21,6 +24,10 @@ export interface Conversation {
    *  DM list, chat header, and bubbles show their photo instead of only initials.
    *  Absent for password accounts (they fall back to initials). */
   peerAvatarUrl?: string;
+  /** Peer's account lifecycle state, refreshed each time the conversation is opened
+   *  (see syncPeerPublicKey in DashboardShell). Absent for conversations cached before
+   *  this field existed or before the first refresh — treat as 'active'. */
+  peerStatus?: PeerStatus;
   /** Deterministic room id both peers derive independently — see chatRoomIdFor. */
   chatRoomId: string;
   createdAt: number;

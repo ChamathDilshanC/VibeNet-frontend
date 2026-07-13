@@ -60,7 +60,13 @@ export interface AuthUser {
   chat_pin_enabled?: boolean;
   /** How the required PIN is derived: a 5-minute rotating code or a static custom PIN. */
   chat_pin_type?: 'rotating' | 'static';
+  /** Account lifecycle state. Absent on older cached sessions predating this field —
+   *  treat as 'active'. */
+  status?: UserStatus;
 }
+
+/** Account lifecycle state — see the backend's models.UserStatus* constants. */
+export type UserStatus = 'active' | 'deactivated' | 'deleted';
 
 export interface AuthResult {
   token: string;

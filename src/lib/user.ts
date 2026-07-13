@@ -25,6 +25,23 @@ export function updateProfile(username: string, displayName: string): Promise<Au
   });
 }
 
+// POST /api/user/deactivate — flips the account to "deactivated": it can no longer
+// sign in anywhere, but the profile and message history keep showing normally to
+// peers (with a "Deactivated" badge). Reversible by a future reactivation path; the
+// caller is responsible for clearing the local session and redirecting to /login.
+export function deactivateAccount(): Promise<{ message: string }> {
+  return apiClient.post<{ message: string }>('/api/user/deactivate');
+}
+
+// DELETE /api/user/delete — permanently disables the account and wipes its PII
+// (real name, email, phone, avatar) server-side. Past messages remain in DynamoDB
+// but peers resolve them to "Deleted User" once they see the deleted status. There
+// is no undo; the caller is responsible for clearing the local session and
+// redirecting to /login.
+export function deleteAccount(): Promise<{ message: string }> {
+  return apiClient.delete<{ message: string }>('/api/user/delete');
+}
+
 // Chat-PIN status returned by GET /api/user/my-pin and PUT /api/user/settings/pin.
 // `pin` is the code the owner should share right now (the static custom PIN, or the
 // active rotating code); empty when disabled, or when static is chosen without a PIN

@@ -21,7 +21,9 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useRouter } from 'next/navigation';
 import { AnimatePresence, motion } from 'framer-motion';
+import { AlertDialog } from '@astryxdesign/core/AlertDialog';
 import { Avatar } from '@astryxdesign/core/Avatar';
 import { Button } from '@astryxdesign/core/Button';
 import { Heading } from '@astryxdesign/core/Heading';
@@ -47,13 +49,25 @@ import {
   ShieldCheck,
   Star,
   Sun,
+  Trash2,
   User,
+  UserMinus,
   type LucideIcon,
 } from 'lucide-react';
 import { useTheme } from 'next-themes';
 import { gooeyToast } from 'goey-toast';
 import { ApiError, resolveAvatarUrl, type AuthUser } from '@/lib/api';
-import { fetchMyPin, updateProfile, updatePinSettings, uploadAvatar, type PinStatus } from '@/lib/user';
+import {
+  deactivateAccount,
+  deleteAccount,
+  fetchMyPin,
+  updateProfile,
+  updatePinSettings,
+  uploadAvatar,
+  type PinStatus,
+} from '@/lib/user';
+import { clearSession } from '@/lib/session';
+import { DangerZoneConfirmDialog } from '@/components/DangerZoneConfirmDialog';
 import { PinInput } from '@/components/PinInput';
 
 // Mirrors validateUsername in the backend's internal/api/handler.go, so the
@@ -698,6 +712,135 @@ function SecurityPanel({
           />
         </div>
       </div>
+
+      <DangerZone user={user} />
+    </VStack>
+  );
+}
+
+// DangerZone — irreversible-account-action row pair at the bottom of Privacy &
+// Security. Deactivate is reversible (an operator can flip status back) and only
+// needs a plain yes/no gate, so it uses Astryx's AlertDialog directly. Delete is
+// permanent, so it additionally requires typing "DELETE" or the account's own
+// username — a confirmation AlertDialog has no slot for, hence the custom
+// DangerZoneConfirmDialog (built from the same Dialog/Layout primitives AlertDialog
+// itself is composed from).
+//
+// Both actions end the session client-side on success: clear the stored JWT/keys
+// and send the person to /login, matching what a deactivated/deleted account can
+// no longer do (log back in) here on this device too.
+function DangerZone({ user }: { user: AuthUser }) {
+  const router = useRouter();
+  const [confirming, setConfirming] = useState<'deactivate' | 'delete' | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function runAction(
+    action: () => Promise<{ message: string }>,
+    successMessage: string,
+    failureMessage: string,
+  ) {
+    setSubmitting(true);
+    try {
+      await action();
+      clearSession();
+      gooeyToast.success(successMessage);
+      router.replace('/login');
+    } catch (err) {
+      gooeyToast.error(err instanceof ApiError ? err.message : failureMessage);
+      setSubmitting(false);
+      setConfirming(null);
+    }
+  }
+
+  return (
+    <VStack gap={5}>
+      <div className="h-px bg-gradient-to-r from-transparent via-red-200 to-transparent dark:via-red-900/40" />
+
+      <VStack gap={1}>
+        <Heading level={2}>Danger Zone</Heading>
+        <Text type="supporting" color="secondary">
+          These actions affect your whole account. Proceed with caution.
+        </Text>
+      </VStack>
+
+      <div className="flex w-full flex-col gap-4 rounded-2xl bg-amber-50/80 p-5 transition-colors duration-300 ease-in-out dark:bg-amber-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
+            <UserMinus className="h-5 w-5" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">Deactivate Account</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              Sign out everywhere and hide your account from new logins. Your profile and
+              messages stay visible to others, marked as deactivated — you can come back later.
+            </p>
+          </div>
+        </div>
+        <div className="vibe-cta-warning shrink-0">
+          <Button
+            label="Deactivate Account"
+            variant="secondary"
+            onClick={() => setConfirming('deactivate')}
+          />
+        </div>
+      </div>
+
+      <div className="flex w-full flex-col gap-4 rounded-2xl bg-red-50/80 p-5 transition-colors duration-300 ease-in-out dark:bg-red-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-start gap-3">
+          <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/15 text-red-600 dark:text-red-400">
+            <Trash2 className="h-5 w-5" strokeWidth={1.75} />
+          </span>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold text-gray-900 dark:text-white">Delete Account</p>
+            <p className="mt-0.5 text-xs text-gray-500 dark:text-gray-400">
+              Permanently erase your real name, email, phone number, and photo. This can&apos;t
+              be undone. Messages you&apos;ve already sent stay in your conversations, shown as
+              sent by a deleted user.
+            </p>
+          </div>
+        </div>
+        <Button
+          label="Delete Account"
+          variant="destructive"
+          className="shrink-0"
+          onClick={() => setConfirming('delete')}
+        />
+      </div>
+
+      <AlertDialog
+        isOpen={confirming === 'deactivate'}
+        onOpenChange={(open) => !open && !submitting && setConfirming(null)}
+        title="Deactivate your account?"
+        description="You'll be signed out on every device and won't be able to log back in until you reactivate. Your profile and past messages stay visible to others in the meantime."
+        actionLabel={submitting ? 'Deactivating…' : 'Deactivate'}
+        actionVariant="destructive"
+        isActionLoading={submitting}
+        onAction={() =>
+          void runAction(
+            deactivateAccount,
+            'Your account has been deactivated.',
+            'Could not deactivate your account.',
+          )
+        }
+      />
+
+      <DangerZoneConfirmDialog
+        isOpen={confirming === 'delete'}
+        onOpenChange={(open) => !open && !submitting && setConfirming(null)}
+        title="Delete your account?"
+        description="This permanently erases your real name, email, phone number, and photo, and cannot be undone. Messages you've already sent stay in your conversations, shown as sent by a deleted user."
+        actionLabel={submitting ? 'Deleting…' : 'Delete Account'}
+        confirmWord="DELETE"
+        username={user.username}
+        isActionLoading={submitting}
+        onAction={() =>
+          void runAction(
+            deleteAccount,
+            'Your account has been deleted.',
+            'Could not delete your account.',
+          )
+        }
+      />
     </VStack>
   );
 }

@@ -25,6 +25,7 @@ import {
   peerName,
   upsertConversation,
   type Conversation,
+  type PeerStatus,
 } from '@/lib/conversations';
 import {
   decryptText,
@@ -358,6 +359,7 @@ export function DashboardShell({
           display_name?: string;
           avatar_url?: string;
           last_seen?: number;
+          status?: PeerStatus;
         }>(`/api/users/${conversation.peerId}/key`);
         // Seed the peer's last-seen so the header can show it immediately when
         // they're offline (presence_update only fires on a live transition).
@@ -373,13 +375,16 @@ export function DashboardShell({
         const resolvedName = resolved.display_name?.trim() || undefined;
         const nameChanged =
           resolvedName !== undefined && resolvedName !== conversation.peerDisplayName;
-        if (!keyChanged && !avatarChanged && !nameChanged) return conversation;
+        const statusChanged =
+          resolved.status !== undefined && resolved.status !== conversation.peerStatus;
+        if (!keyChanged && !avatarChanged && !nameChanged && !statusChanged) return conversation;
         if (keyChanged) sharedKeyCache.current.delete(conversation.peerId);
         const refreshed: Conversation = {
           ...conversation,
-          peerPublicKey: resolved.public_key,
+          peerPublicKey: resolved.public_key || conversation.peerPublicKey,
           peerAvatarUrl: resolved.avatar_url,
           peerDisplayName: resolvedName ?? conversation.peerDisplayName,
+          peerStatus: resolved.status ?? conversation.peerStatus,
         };
         setConversations(upsertConversation(currentUserId, refreshed));
         return refreshed;
@@ -1795,6 +1800,7 @@ export function DashboardShell({
           connectionStatus={connectionStatus}
           isPeerOnline={visibleOnlinePeers.has(activeConversation.peerId)}
           peerLastSeen={lastSeenByPeer[activeConversation.peerId] ?? null}
+          peerStatus={activeConversation.peerStatus}
           isPeerTyping={typingPeers.has(activeConversation.peerId)}
           onTyping={(isTyping) =>
             send({

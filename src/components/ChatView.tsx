@@ -38,7 +38,7 @@ import {
 import { gooeyToast } from 'goey-toast';
 import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import { resolveAvatarUrl } from '@/lib/api';
-import { peerName, type Conversation } from '@/lib/conversations';
+import { peerName, type Conversation, type PeerStatus } from '@/lib/conversations';
 import { canManageGroup, memberName, type Group } from '@/lib/groups';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
 import { GroupContextMenu } from './GroupContextMenu';
@@ -481,6 +481,7 @@ export function ChatView({
   connectionStatus,
   isPeerOnline = false,
   peerLastSeen,
+  peerStatus,
   isPeerTyping = false,
   typingNames = [],
   onTyping,
@@ -514,6 +515,11 @@ export function ChatView({
   isPeerOnline?: boolean;
   /** DM peer's last-seen time (unix ms), shown when offline. */
   peerLastSeen?: number | null;
+  /** DM peer's account lifecycle state (refreshed when the conversation opens — see
+   *  syncPeerPublicKey in DashboardShell). Undefined/'active' renders normally; a
+   *  deactivated/deleted peer replaces the online/typing/last-seen status line with
+   *  an account-status line, and a deleted peer additionally disables the composer. */
+  peerStatus?: PeerStatus;
   /** Whether the DM peer is currently composing — drives the typing indicator. */
   isPeerTyping?: boolean;
   /** Display names of group members currently composing ("X is typing…"). */
@@ -665,7 +671,7 @@ export function ChatView({
 
   function handleSend() {
     const text = draft.trim();
-    if (!text) return;
+    if (!text || isPeerDeleted) return;
     // Sending implies we've stopped composing — clear the peer's indicator now.
     stopTyping();
     // When a reply is active, capture a compact snapshot of the quoted message
@@ -746,7 +752,11 @@ export function ChatView({
     exitSelectMode();
   }
 
-  const canSend = Boolean(draft.trim()) && !isSending && keysReady;
+  // A deleted DM peer has no public key left to encrypt new messages to (see
+  // GetUserPublicKey), so the composer is disabled outright rather than allowing a
+  // send that would only fail — a deactivated peer can still be messaged normally.
+  const isPeerDeleted = !isGroup && peerStatus === 'deleted';
+  const canSend = Boolean(draft.trim()) && !isSending && keysReady && !isPeerDeleted;
   const pinnedMessages = messages.filter((m) => m.pinned);
   const latestPinned = pinnedMessages[pinnedMessages.length - 1];
   const replyIsMine = activeReply?.senderId === myUserId;
@@ -829,8 +839,18 @@ export function ChatView({
                         {group!.members.length === 1 ? 'member' : 'members'}
                       </span>
                     )
-                  ) : /* Live peer status: typing → online (glowing green) → last seen. */
-                  isPeerTyping ? (
+                  ) : /* Account status takes over the line entirely — a deactivated/deleted
+                         peer has no live presence to show, so typing/online/last-seen are
+                         all suppressed in favour of a plain status line. */
+                  peerStatus === 'deleted' ? (
+                    <span className="truncate text-xs font-medium text-gray-500 dark:text-gray-400">
+                      Account deleted
+                    </span>
+                  ) : peerStatus === 'deactivated' ? (
+                    <span className="truncate text-xs font-medium text-amber-600 dark:text-amber-400">
+                      Account deactivated
+                    </span>
+                  ) : isPeerTyping ? (
                     <span className="text-xs font-medium text-[var(--vibe-blue)]">typing…</span>
                   ) : isPeerOnline ? (
                     <span className="flex items-center gap-1.5 text-xs font-medium text-[#277a0c]">
@@ -1041,7 +1061,8 @@ export function ChatView({
               <button
                 type="button"
                 aria-label="Add emoji"
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600">
+                disabled={isPeerDeleted}
+                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
                 <FaceSmileIcon className="h-6 w-6" />
               </button>
 
@@ -1053,12 +1074,15 @@ export function ChatView({
                 ref={inputRef}
                 rows={1}
                 aria-label="Message"
+                disabled={isPeerDeleted}
                 placeholder={
-                  !keysReady
-                    ? 'Setting up encryption…'
-                    : activeReply
-                      ? 'Type your reply…'
-                      : `Message ${title}`
+                  isPeerDeleted
+                    ? 'This account has been deleted'
+                    : !keysReady
+                      ? 'Setting up encryption…'
+                      : activeReply
+                        ? 'Type your reply…'
+                        : `Message ${title}`
                 }
                 value={draft}
                 onChange={(event) => {
@@ -1080,14 +1104,15 @@ export function ChatView({
                   }
                 }}
                 onBlur={stopTyping}
-                className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-gray-900 dark:text-white outline-none placeholder:text-gray-400"
+                className="min-w-0 flex-1 resize-none bg-transparent px-1 py-1.5 text-sm text-gray-900 dark:text-white outline-none placeholder:text-gray-400 disabled:cursor-not-allowed disabled:placeholder:text-gray-400"
                 style={{ maxHeight: MAX_COMPOSER_HEIGHT_PX }}
               />
 
               <button
                 type="button"
                 aria-label="Attach file"
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600">
+                disabled={isPeerDeleted}
+                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
                 <PaperClipIcon className="h-6 w-6" />
               </button>
 

@@ -279,6 +279,24 @@ body {
     var(--vibe-gradient) border-box;
 }
 
+/*
+ * Danger Zone "Deactivate Account" button: Astryx's Button has no built-in warning
+ * variant (only primary/secondary/ghost/destructive), so a solid amber fill is
+ * layered onto the secondary variant here — same wrapper-class technique as
+ * .vibe-cta above — to read as "caution" next to the native red "destructive"
+ * Delete Account button beside it.
+ */
+.vibe-cta-warning .astryx-button[data-variant="secondary"] {
+  background: #f59e0b;
+  border-color: transparent;
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgba(245, 158, 11, 0.28);
+}
+.vibe-cta-warning .astryx-button[data-variant="secondary"]:hover {
+  filter: brightness(1.05);
+}
+
 /* ─── Auth pages (login / register) ─────────────────────────────────────── */
 
 /* Stacked CTAs on the auth forms fill the column width. Scoped so the landing
