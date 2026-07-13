@@ -116,7 +116,11 @@ export function Sidebar({
         onCollapsedChange: setIsCollapsed,
         hasButton: false,
       }}
-      resizable={{ defaultWidth: 360, minWidth: 280, maxWidth: 480 }}
+      // A bit wider than before by default — the group rows now carry both a
+      // member-count and an online-count indicator alongside the unread
+      // badge, and 360px was already snug for a long group/DM name plus
+      // just one of those.
+      resizable={{ defaultWidth: 408, minWidth: 280, maxWidth: 480 }}
       header={
         <div className="flex items-center justify-between gap-1 px-3 py-2">
           {/* Logo can't fit the 72px collapsed rail — the chevron stands in alone. */}
@@ -223,6 +227,7 @@ export function Sidebar({
         <SideNavItem label="Create group" icon={PlusIcon} onClick={onCreateGroup} />
         {groups.map((group) => {
           const unread = unreadByGroup[group.group_id] ?? 0;
+          const onlineCount = group.members.filter((m) => onlinePeers.has(m.user_id)).length;
           return (
             <SideNavItem
               key={group.group_id}
@@ -245,9 +250,23 @@ export function Sidebar({
                       aria-label={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
                     />
                   )}
-                  <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
+                  <span
+                    className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500"
+                    aria-label={`${group.members.length} ${group.members.length === 1 ? 'member' : 'members'}`}>
                     <UserGroupIcon className="h-3.5 w-3.5" aria-hidden="true" />
                     {group.members.length}
+                  </span>
+                  <span
+                    className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500"
+                    aria-label={`${onlineCount} of ${group.members.length} members online`}>
+                    <span
+                      className={[
+                        'h-1.5 w-1.5 rounded-full',
+                        onlineCount > 0 ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600',
+                      ].join(' ')}
+                      aria-hidden="true"
+                    />
+                    {onlineCount}
                   </span>
                 </div>
               }

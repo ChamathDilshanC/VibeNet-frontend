@@ -49,6 +49,79 @@ export interface MessageFileMeta {
   size: number;
 }
 
+// A shared contact's identity, sent as a 'contact' message so the recipient
+// can open a chat with them directly (see ContactMessageCard). Field names
+// mirror the wire-style DTOs elsewhere in this codebase (snake_case, e.g.
+// RemoteMessageDTO) rather than this module's usual camelCase, since this is
+// literally the payload the "type: 'contact'" message carries end-to-end.
+export interface ContactPayload {
+  user_id: string;
+  real_name: string;
+  username: string;
+}
+
+// Poll content — "Create Poll" (see CreatePollDialog) collects question +
+// options for real; voting itself rides a separate 'poll_vote' message (see
+// PollVotePayload/applyPollVote below) rather than an edit to this message,
+// since the poll-creation envelope is immutable once sent like any other
+// message. `votes`/`voteOrder` are the local mirror of every vote applied so
+// far — never present in the envelope that *creates* the poll, only ever
+// patched in afterwards by applyPollVote (see mergeMessages, which takes
+// care to preserve them across a history re-sync of the same poll).
+export interface PollPayload {
+  question: string;
+  options: string[];
+  /** Voter user id -> chosen option index. One vote per voter; voting again
+   *  changes their existing choice rather than adding a second one. */
+  votes?: Record<string, number>;
+  /** Voter ids in the order they (most recently) voted — a plain `votes`
+   *  object doesn't reorder on re-assignment, so this is what lets the
+   *  "latest voters" avatar strip reflect who voted/changed most recently. */
+  voteOrder?: string[];
+}
+
+// A single vote cast on an existing poll message — sent as its own message
+// (type: 'poll_vote') through the identical E2EE 'message' pipeline as
+// everything else, but never rendered as a bubble: the recipient (and the
+// voter's own other devices) apply it as a patch onto the referenced poll's
+// `votes`/`voteOrder` instead (see DashboardShell's applyPollVote calls).
+export interface PollVotePayload {
+  pollMessageId: string;
+  optionIndex: number;
+}
+
+// Placeholder event content — "Create Event" (see CreateEventDialog) is a
+// stub for now.
+export interface EventPayload {
+  title: string;
+  date: string;
+  location?: string;
+}
+
+// "Delete for everyone" notice — sent as its own message (type:
+// 'delete_notice') through the identical E2EE 'message' pipeline as
+// everything else, same as PollVotePayload above. The backend has no
+// `delete_message` WebSocket frame type (it was only ever handled — silently
+// dropped, in fact — as a malformed chat message), so this rides the one
+// frame type the backend genuinely relays/persists instead of needing a
+// backend change at all. Never rendered as a bubble: the recipient (and the
+// deleter's own other devices) apply it as a patch that erases the
+// referenced message's content — see DashboardShell's setMessageDeleted calls.
+export interface DeleteNoticePayload {
+  deletedMessageId: string;
+}
+
+// Discriminates a rich-content message from a plain text one. 'audio' reuses
+// `file` (the same E2EE upload path as image/document — see DashboardShell's
+// handleSendFile) but tags it so bubbles render an <audio> player instead of
+// a download card; 'contact'/'poll'/'event' carry their own payload instead
+// of `file`. 'poll_vote'/'delete_notice' are special: neither is ever
+// recorded as a visible message (see DashboardShell) — they only ever patch
+// an existing message (a poll's tally, or erase a deleted message's content).
+// Absent means plain text, or an image/document file (existing mimeType-based
+// rendering in MessageAttachment).
+export type MessageKind = 'audio' | 'contact' | 'poll' | 'event' | 'poll_vote' | 'delete_notice';
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -60,6 +133,14 @@ export interface ChatMessage {
   /** Set when this message carries an encrypted file/image attachment instead
    *  of (or alongside) plain text — see MessageAttachment.tsx. */
   file?: MessageFileMeta;
+  /** See MessageKind. */
+  type?: MessageKind;
+  /** Set when type === 'contact'. */
+  contact?: ContactPayload;
+  /** Set when type === 'poll'. */
+  poll?: PollPayload;
+  /** Set when type === 'event'. */
+  event?: EventPayload;
   /** Pinned for the whole room (see pin_message over the WebSocket). Local mirror
    *  of the shared pin state so the bubble + pinned banner render without a refetch. */
   pinned?: boolean;
@@ -75,6 +156,12 @@ export interface ChatMessage {
    *  every member) but rendered as a centered system pill instead of a bubble
    *  — see ChatView. senderId is still whoever's client generated it. */
   isSystem?: boolean;
+  /** "Delete for everyone" — see setMessageDeleted. Content fields are wiped
+   *  when this is set; the bubble renders a "This message was deleted"
+   *  placeholder instead (see ChatView's MessageBody). Distinct from "delete
+   *  for me" (deleteMessage), which removes the message from view entirely
+   *  rather than leaving a placeholder in its place. */
+  isDeleted?: boolean;
 }
 
 // ── Encrypted message body envelope ────────────────────────────────────────
@@ -95,6 +182,15 @@ interface MessageEnvelope {
   // conversation/group's shared key is "the existing E2EE logic" that gives
   // them it — no separate encryption pass needed.
   file?: MessageFileMeta;
+  // See MessageKind — rides in the envelope (not the WebSocket frame) for the
+  // same reason `file` does: the backend is a blind router with a fixed frame
+  // shape, so any per-message-kind data has to travel inside the ciphertext.
+  type?: MessageKind;
+  contact?: ContactPayload;
+  poll?: PollPayload;
+  event?: EventPayload;
+  vote?: PollVotePayload;
+  deleteNotice?: DeleteNoticePayload;
 }
 
 // Metadata that rides inside the encrypted envelope alongside the text. Carried
@@ -107,6 +203,12 @@ export interface MessageMeta {
   isForwarded?: boolean;
   isSystem?: boolean;
   file?: MessageFileMeta;
+  type?: MessageKind;
+  contact?: ContactPayload;
+  poll?: PollPayload;
+  event?: EventPayload;
+  vote?: PollVotePayload;
+  deleteNotice?: DeleteNoticePayload;
 }
 
 // encodeMessageBody produces the string handed to encryptText — a JSON envelope
@@ -118,6 +220,12 @@ export function encodeMessageBody(text: string, meta: MessageMeta = {}): string 
   if (meta.isForwarded) envelope.isForwarded = true;
   if (meta.isSystem) envelope.isSystem = true;
   if (meta.file) envelope.file = meta.file;
+  if (meta.type) envelope.type = meta.type;
+  if (meta.contact) envelope.contact = meta.contact;
+  if (meta.poll) envelope.poll = meta.poll;
+  if (meta.event) envelope.event = meta.event;
+  if (meta.vote) envelope.vote = meta.vote;
+  if (meta.deleteNotice) envelope.deleteNotice = meta.deleteNotice;
   return JSON.stringify(envelope);
 }
 
@@ -131,6 +239,12 @@ export function decodeMessageBody(raw: string): {
   isForwarded?: boolean;
   isSystem?: boolean;
   file?: MessageFileMeta;
+  type?: MessageKind;
+  contact?: ContactPayload;
+  poll?: PollPayload;
+  event?: EventPayload;
+  vote?: PollVotePayload;
+  deleteNotice?: DeleteNoticePayload;
 } {
   try {
     const parsed = JSON.parse(raw) as Partial<MessageEnvelope>;
@@ -141,6 +255,12 @@ export function decodeMessageBody(raw: string): {
         isForwarded: parsed.isForwarded,
         isSystem: parsed.isSystem,
         file: parsed.file,
+        type: parsed.type,
+        contact: parsed.contact,
+        poll: parsed.poll,
+        event: parsed.event,
+        vote: parsed.vote,
+        deleteNotice: parsed.deleteNotice,
       };
     }
   } catch {
@@ -185,6 +305,10 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
     // Fold in the incoming copy but never lose the local-only flags: history/live
     // frames carry neither `pinned` nor `kept`, so a naive overwrite would clear a
     // message the user had just pinned or kept. Status still only moves forward.
+    // A poll's `votes`/`voteOrder` are never part of the envelope that *creates*
+    // it either — they're only ever patched on afterwards by applyPollVote — so
+    // a poll re-synced from history needs the same treatment or every vote so
+    // far would vanish the moment its creation message gets merged again.
     byId.set(
       message.id,
       prev
@@ -196,6 +320,28 @@ export function mergeMessages(chatRoomId: string, incoming: ChatMessage[]): Chat
             isForwarded: message.isForwarded ?? prev.isForwarded,
             isSystem: message.isSystem ?? prev.isSystem,
             replyTo: message.replyTo ?? prev.replyTo,
+            poll: message.poll
+              ? {
+                  ...message.poll,
+                  votes: prev.poll?.votes ?? message.poll.votes,
+                  voteOrder: prev.poll?.voteOrder ?? message.poll.voteOrder,
+                }
+              : message.poll,
+            // Once "delete for everyone" has erased a message, it must stay
+            // erased — a duplicate/late delivery of the original content
+            // (network fluke, not the normal path) must never resurrect it.
+            ...(prev.isDeleted
+              ? {
+                  isDeleted: true,
+                  text: '',
+                  file: undefined,
+                  type: undefined,
+                  contact: undefined,
+                  poll: undefined,
+                  event: undefined,
+                  replyTo: undefined,
+                }
+              : {}),
           }
         : message,
     );
@@ -250,6 +396,28 @@ export function deleteMessage(chatRoomId: string, messageId: string): ChatMessag
   );
 }
 
+// setMessageDeleted implements "delete for everyone": unlike deleteMessage
+// (which removes the row from view entirely, only for this device), this
+// keeps the message's id/senderId/timestamp/status in place — so it still
+// occupies its slot in the timeline — but wipes every content field and
+// flags isDeleted, so the bubble renders a "This message was deleted"
+// placeholder instead (see ChatView's MessageBody). Applied both
+// optimistically on the deleter's own device and on receipt of the
+// corresponding 'delete_notice' message (see DashboardShell), so every
+// device converges on the same erased content regardless of who deleted it.
+// A no-op if the message isn't known on this device.
+export function setMessageDeleted(chatRoomId: string, messageId: string): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(
+    chatRoomId,
+    getMessages(chatRoomId).map((m) =>
+      m.id === messageId
+        ? { id: m.id, senderId: m.senderId, text: '', timestamp: m.timestamp, status: m.status, isDeleted: true }
+        : m,
+    ),
+  );
+}
+
 // clearMessages wipes a room's entire local cache — "Clear chat" from the
 // header menu. Local only, like "delete for me": it doesn't touch history on
 // the server, so a reconnect/history sync can still repopulate anything the
@@ -285,5 +453,37 @@ export function setMessageKept(
   return writeMessages(
     chatRoomId,
     getMessages(chatRoomId).map((m) => (m.id === messageId ? { ...m, kept } : m)),
+  );
+}
+
+// applyPollVote patches a voter's choice onto an existing poll message —
+// called both optimistically (the voter's own device, the instant they tap
+// an option) and on receipt of someone else's 'poll_vote' message (see
+// DashboardShell), so every device converges on the same tally regardless of
+// who cast the vote or in what order the frames arrive. One vote per voter:
+// voting again just moves their entry to a new option instead of adding a
+// second one. A no-op (returns the list unchanged) if the poll message isn't
+// known on this device yet, or optionIndex is out of range.
+export function applyPollVote(
+  chatRoomId: string,
+  pollMessageId: string,
+  voterId: string,
+  optionIndex: number,
+): ChatMessage[] {
+  if (typeof window === 'undefined') return [];
+  return writeMessages(
+    chatRoomId,
+    getMessages(chatRoomId).map((m) => {
+      if (m.id !== pollMessageId || !m.poll) return m;
+      if (optionIndex < 0 || optionIndex >= m.poll.options.length) return m;
+      return {
+        ...m,
+        poll: {
+          ...m.poll,
+          votes: { ...m.poll.votes, [voterId]: optionIndex },
+          voteOrder: [...(m.poll.voteOrder ?? []).filter((id) => id !== voterId), voterId],
+        },
+      };
+    }),
   );
 }

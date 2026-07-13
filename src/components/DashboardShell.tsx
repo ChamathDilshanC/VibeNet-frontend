@@ -56,6 +56,7 @@ import {
   type WrappedKeyInput,
 } from '@/lib/groups';
 import {
+  applyPollVote,
   clearMessages,
   decodeMessageBody,
   deleteMessage,
@@ -63,11 +64,16 @@ import {
   getMessages,
   markOwnMessagesRead,
   mergeMessages,
+  setMessageDeleted,
   setMessageKept,
   setMessagePinned,
   setMessageStatus,
   type ChatMessage,
+  type ContactPayload,
+  type EventPayload,
   type MessageFileMeta,
+  type MessageMeta,
+  type PollPayload,
   type ReplyPreview,
 } from '@/lib/messageStore';
 import { encryptFile } from '@/lib/fileCrypto';
@@ -76,8 +82,11 @@ import { markRoomRead, unreadCount } from '@/lib/readState';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
+import { ContactShareDialog } from './ContactShareDialog';
 import { ContactsView } from './ContactsView';
+import { CreateEventDialog } from './CreateEventDialog';
 import { CreateGroupDialog, type SelectedGroupMember } from './CreateGroupDialog';
+import { CreatePollDialog } from './CreatePollDialog';
 import { EmptyState } from './EmptyState';
 import { ForwardDialog } from './ForwardDialog';
 import { GroupDetailsDialog } from './GroupDetailsDialog';
@@ -108,7 +117,6 @@ interface InboundFrame {
     | 'typing'
     | 'pin_message'
     | 'unpin_message'
-    | 'delete_message'
     | 'user_update'
     | 'invite_received'
     | 'group_update'
@@ -166,6 +174,24 @@ interface RemoteMessageDTO {
   timestamp: number;
 }
 
+// A decrypted 'poll_vote' frame pulled out of a history batch (see
+// syncHistory/syncGroupHistory) — applied as a tally patch via applyPollVote
+// rather than recorded as a message.
+interface DecryptedVote {
+  pollMessageId: string;
+  optionIndex: number;
+  voterId: string;
+  timestamp: number;
+}
+
+// A decrypted 'delete_notice' frame pulled out of a history batch (see
+// syncHistory/syncGroupHistory) — applied via setMessageDeleted rather than
+// recorded as a message.
+interface DecryptedDelete {
+  deletedMessageId: string;
+  timestamp: number;
+}
+
 export function DashboardShell({
   user,
   onLogout,
@@ -213,6 +239,10 @@ export function DashboardShell({
   const [sendError, setSendError] = useState<string | null>(null);
   // The message currently being forwarded, if any — drives the ForwardDialog.
   const [forwardingMessage, setForwardingMessage] = useState<ChatMessage | null>(null);
+  // Drive the composer's Contact/Poll/Event attachment dialogs (see AttachmentMenu).
+  const [isContactShareOpen, setIsContactShareOpen] = useState(false);
+  const [isPollComposerOpen, setIsPollComposerOpen] = useState(false);
+  const [isEventComposerOpen, setIsEventComposerOpen] = useState(false);
   // Peer IDs currently reported online by the hub (see the presence poll below).
   const [onlinePeers, setOnlinePeers] = useState<Set<string>>(new Set());
   // Peer IDs currently composing a message to us (drives the typing indicator).
@@ -514,12 +544,27 @@ export function DashboardShell({
         const pending = remote.filter((m) => !alreadyHave.has(m.message_id));
         if (pending.length === 0) return;
 
+        // poll_vote/delete_notice frames are never real messages (see
+        // handleVotePoll/handleDeleteForEveryone) — pulled out of `ok` during
+        // decrypt and applied as patches afterwards, once whatever they
+        // target has actually been merged into storage.
         const decryptAll = async (key: CryptoKey) => {
           const ok: ChatMessage[] = [];
+          const votes: DecryptedVote[] = [];
+          const deletes: DecryptedDelete[] = [];
           for (const m of pending) {
             try {
               const plaintext = await decryptText(key, m.ciphertext, m.nonce);
-              const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
+              const { text, replyTo, isForwarded, isSystem, file, type, contact, poll, event, vote, deleteNotice } =
+                decodeMessageBody(plaintext);
+              if (type === 'poll_vote' && vote) {
+                votes.push({ ...vote, voterId: m.sender_id, timestamp: m.timestamp });
+                continue;
+              }
+              if (type === 'delete_notice' && deleteNotice) {
+                deletes.push({ deletedMessageId: deleteNotice.deletedMessageId, timestamp: m.timestamp });
+                continue;
+              }
               ok.push({
                 id: m.message_id,
                 senderId: m.sender_id,
@@ -529,31 +574,50 @@ export function DashboardShell({
                 isForwarded,
                 isSystem,
                 file,
+                type,
+                contact,
+                poll,
+                event,
               });
             } catch {
               // Expected for history predating a key rotation/loss — summarised
               // once below rather than logged per message.
             }
           }
-          return ok;
+          return { ok, votes, deletes };
         };
 
-        let decrypted = await decryptAll(sharedKey);
+        let { ok: decrypted, votes, deletes } = await decryptAll(sharedKey);
 
         // A miss can mean the peer rotated their key since we cached it — retry
         // once against their current key before concluding it's unrecoverable.
-        if (decrypted.length < pending.length) {
+        if (decrypted.length + votes.length + deletes.length < pending.length) {
           const refresh = await refreshPeerSharedKey(conversation, currentUserId);
           if (refresh) {
             const retried = await decryptAll(refresh.key);
-            if (retried.length > decrypted.length) decrypted = retried;
+            if (
+              retried.ok.length + retried.votes.length + retried.deletes.length >
+              decrypted.length + votes.length + deletes.length
+            ) {
+              ({ ok: decrypted, votes, deletes } = retried);
+            }
           }
         }
 
-        if (decrypted.length === 0) return;
+        if (decrypted.length === 0 && votes.length === 0 && deletes.length === 0) return;
 
-        const merged = mergeMessages(conversation.chatRoomId, decrypted);
-        setMessagesByRoom((prev) => ({ ...prev, [conversation.chatRoomId]: merged }));
+        let final = mergeMessages(conversation.chatRoomId, decrypted);
+        if (votes.length > 0) {
+          // Oldest first, so a voter who changed their mind ends up recorded
+          // with their latest choice rather than whichever arrived last.
+          for (const v of [...votes].sort((a, b) => a.timestamp - b.timestamp)) {
+            final = applyPollVote(conversation.chatRoomId, v.pollMessageId, v.voterId, v.optionIndex);
+          }
+        }
+        for (const d of deletes) {
+          final = setMessageDeleted(conversation.chatRoomId, d.deletedMessageId);
+        }
+        setMessagesByRoom((prev) => ({ ...prev, [conversation.chatRoomId]: final }));
       } catch {
         // Network/auth failure — live delivery still works without history.
         // Any messages that stay undecryptable were encrypted under a key
@@ -711,15 +775,6 @@ export function DashboardShell({
         return;
       }
 
-      // "Delete for everyone" broadcast: drop the message from our cache too.
-      if (frame.type === 'delete_message') {
-        if (frame.chat_room_id && frame.message_id) {
-          const updated = deleteMessage(frame.chat_room_id, frame.message_id);
-          setMessagesByRoom((prev) => ({ ...prev, [frame.chat_room_id!]: updated }));
-        }
-        return;
-      }
-
       // Pin/unpin broadcast: someone toggled a message's pinned state for the
       // whole room (DM peer, or every group member) — mirror it here too.
       if (frame.type === 'pin_message' || frame.type === 'unpin_message') {
@@ -827,17 +882,30 @@ export function DashboardShell({
           if (!entry) return;
           try {
             const plaintext = await decryptText(entry.key, ciphertext, nonce);
-            const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
-            recordMessage(chatRoomId, {
-              id: messageId,
-              senderId,
-              text,
-              timestamp: timestamp ?? Date.now(),
-              isForwarded: isForwarded ?? frameForwarded,
-              isSystem,
-              replyTo,
-              file,
-            });
+            const { text, replyTo, isForwarded, isSystem, file, type, contact, poll, event, vote, deleteNotice } =
+              decodeMessageBody(plaintext);
+            if (type === 'poll_vote' && vote) {
+              const updated = applyPollVote(chatRoomId, vote.pollMessageId, senderId, vote.optionIndex);
+              setMessagesByRoom((prev) => ({ ...prev, [chatRoomId]: updated }));
+            } else if (type === 'delete_notice' && deleteNotice) {
+              const updated = setMessageDeleted(chatRoomId, deleteNotice.deletedMessageId);
+              setMessagesByRoom((prev) => ({ ...prev, [chatRoomId]: updated }));
+            } else {
+              recordMessage(chatRoomId, {
+                id: messageId,
+                senderId,
+                text,
+                timestamp: timestamp ?? Date.now(),
+                isForwarded: isForwarded ?? frameForwarded,
+                isSystem,
+                replyTo,
+                file,
+                type,
+                contact,
+                poll,
+                event,
+              });
+            }
             // A message from them supersedes their typing state — clear it now
             // rather than waiting out the timeout.
             setGroupTyping((prev) => {
@@ -894,20 +962,33 @@ export function DashboardShell({
           // Unwrap the envelope: pulls out the text and any metadata the sender
           // embedded — reply context and the forwarded flag (legacy plain-text
           // bodies decode to just the text).
-          const { text, replyTo, isForwarded, file } = decodeMessageBody(plaintext);
-          recordMessage(chatRoomId, {
-            id: messageId,
-            senderId,
-            text,
-            timestamp: timestamp ?? Date.now(),
-            // Render the "Forwarded" tag on the recipient's bubble too. The flag
-            // travels inside the ciphertext (the backend drops frame-level extras
-            // as a blind router); the frame flag is only a fallback if a future
-            // backend starts relaying it.
-            isForwarded: isForwarded ?? frameForwarded,
-            replyTo,
-            file,
-          });
+          const { text, replyTo, isForwarded, file, type, contact, poll, event, vote, deleteNotice } =
+            decodeMessageBody(plaintext);
+          if (type === 'poll_vote' && vote) {
+            const updated = applyPollVote(chatRoomId, vote.pollMessageId, senderId, vote.optionIndex);
+            setMessagesByRoom((prev) => ({ ...prev, [chatRoomId]: updated }));
+          } else if (type === 'delete_notice' && deleteNotice) {
+            const updated = setMessageDeleted(chatRoomId, deleteNotice.deletedMessageId);
+            setMessagesByRoom((prev) => ({ ...prev, [chatRoomId]: updated }));
+          } else {
+            recordMessage(chatRoomId, {
+              id: messageId,
+              senderId,
+              text,
+              timestamp: timestamp ?? Date.now(),
+              // Render the "Forwarded" tag on the recipient's bubble too. The flag
+              // travels inside the ciphertext (the backend drops frame-level extras
+              // as a blind router); the frame flag is only a fallback if a future
+              // backend starts relaying it.
+              isForwarded: isForwarded ?? frameForwarded,
+              replyTo,
+              file,
+              type,
+              contact,
+              poll,
+              event,
+            });
+          }
         } catch {
           // Undecryptable even after a key-refresh retry — genuinely
           // tampered payload or an unresolvable key mismatch. Drop rather
@@ -1329,10 +1410,21 @@ export function DashboardShell({
         if (pending.length === 0) return;
 
         const decrypted: ChatMessage[] = [];
+        const votes: DecryptedVote[] = [];
+        const deletes: DecryptedDelete[] = [];
         for (const m of pending) {
           try {
             const plaintext = await decryptText(entry.key, m.ciphertext, m.nonce);
-            const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
+            const { text, replyTo, isForwarded, isSystem, file, type, contact, poll, event, vote, deleteNotice } =
+              decodeMessageBody(plaintext);
+            if (type === 'poll_vote' && vote) {
+              votes.push({ ...vote, voterId: m.sender_id, timestamp: m.timestamp });
+              continue;
+            }
+            if (type === 'delete_notice' && deleteNotice) {
+              deletes.push({ deletedMessageId: deleteNotice.deletedMessageId, timestamp: m.timestamp });
+              continue;
+            }
             decrypted.push({
               id: m.message_id,
               senderId: m.sender_id,
@@ -1342,15 +1434,27 @@ export function DashboardShell({
               isForwarded,
               isSystem,
               file,
+              type,
+              contact,
+              poll,
+              event,
             });
           } catch {
             // Encrypted under a key generation this device can't recover — skip.
           }
         }
-        if (decrypted.length === 0) return;
+        if (decrypted.length === 0 && votes.length === 0 && deletes.length === 0) return;
 
-        const merged = mergeMessages(roomId, decrypted);
-        setMessagesByRoom((prev) => ({ ...prev, [roomId]: merged }));
+        let final = mergeMessages(roomId, decrypted);
+        if (votes.length > 0) {
+          for (const v of [...votes].sort((a, b) => a.timestamp - b.timestamp)) {
+            final = applyPollVote(roomId, v.pollMessageId, v.voterId, v.optionIndex);
+          }
+        }
+        for (const d of deletes) {
+          final = setMessageDeleted(roomId, d.deletedMessageId);
+        }
+        setMessagesByRoom((prev) => ({ ...prev, [roomId]: final }));
       } catch {
         // Network/auth failure — live delivery still works without history.
       }
@@ -1543,7 +1647,9 @@ export function DashboardShell({
   // structured `file` metadata, so search, notifications, and any client that
   // doesn't understand `file` yet all still show something readable.
   function fileMessageCaption(name: string, mimeType: string): string {
-    return mimeType.startsWith('image/') ? `📷 ${name}` : `📎 ${name}`;
+    if (mimeType.startsWith('image/')) return `📷 ${name}`;
+    if (mimeType.startsWith('audio/')) return `🎵 ${name}`;
+    return `📎 ${name}`;
   }
 
   // Encrypts a file/image entirely client-side (see lib/fileCrypto), uploads
@@ -1593,10 +1699,14 @@ export function DashboardShell({
         size: file.size,
       };
       const caption = fileMessageCaption(file.name, fileMeta.mimeType);
+      // Audio reuses this exact same encrypt/upload/send path as every other
+      // file — only the envelope's `type` tag differs, so MessageAttachment
+      // knows to render an <audio> player instead of a download card.
+      const kind = fileMeta.mimeType.startsWith('audio/') ? ('audio' as const) : undefined;
 
       const { ciphertext, nonce } = await encryptText(
         sharedKey,
-        encodeMessageBody(caption, { file: fileMeta }),
+        encodeMessageBody(caption, { file: fileMeta, type: kind }),
       );
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
@@ -1620,12 +1730,139 @@ export function DashboardShell({
         timestamp,
         status: 'sent',
         file: fileMeta,
+        type: kind,
       });
     } catch (err) {
       setSendError(err instanceof Error ? err.message : 'Could not send file.');
     } finally {
       setIsSending(false);
     }
+  }
+
+  // Shared send path for every rich-content kind below (contact/poll/event/
+  // poll_vote): resolve-key → encrypt → WebSocket 'message'. messageId/
+  // timestamp are generated by the caller (not in here) and returns just the
+  // roomId, so the caller decides what to do next — sendRichMessage records a
+  // visible bubble, handleVotePoll instead patches the poll it references and
+  // never shows a bubble at all. Returns null (and has already set sendError)
+  // if nothing was sent. Kept separate from handleSend/handleSendFile
+  // themselves so those two (already working, already tested paths) don't
+  // need touching.
+  async function sendEnvelope(
+    messageId: string,
+    timestamp: number,
+    caption: string,
+    meta: MessageMeta,
+  ): Promise<string | null> {
+    const group = activeGroupId ? groups.find((g) => g.group_id === activeGroupId) : undefined;
+    const conversation = activeGroupId
+      ? undefined
+      : conversations.find((c) => c.peerId === activePeerId);
+    if (!group && !conversation) return null;
+
+    setIsSending(true);
+    setSendError(null);
+    try {
+      let sharedKey: CryptoKey | null = null;
+      if (group) {
+        const entry = await getGroupKey(group);
+        if (!entry) {
+          throw new Error('Could not access the group encryption key. Try reopening the group.');
+        }
+        sharedKey = entry.key;
+      } else {
+        sharedKey = await getSharedKey(conversation!);
+        if (!sharedKey) throw new Error('Encryption keys are not ready yet.');
+      }
+
+      const { ciphertext, nonce } = await encryptText(sharedKey, encodeMessageBody(caption, meta));
+      const roomId = group ? groupRoomId(group.group_id) : conversation!.chatRoomId;
+
+      const enqueued = send({
+        type: 'message',
+        message_id: messageId,
+        ...(group ? { group_id: group.group_id } : { receiver_id: conversation!.peerId }),
+        chat_room_id: roomId,
+        ciphertext,
+        nonce,
+        timestamp,
+      });
+      if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
+
+      return roomId;
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send message.');
+      return null;
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  async function sendRichMessage(caption: string, meta: MessageMeta) {
+    if (!user) return;
+    const messageId = crypto.randomUUID();
+    const timestamp = Date.now();
+    const roomId = await sendEnvelope(messageId, timestamp, caption, meta);
+    if (!roomId) return;
+    recordMessage(roomId, {
+      id: messageId,
+      senderId: user.user_id,
+      text: caption,
+      timestamp,
+      status: 'sent',
+      ...meta,
+    });
+  }
+
+  // Sends a previously-established contact's identity as a 'contact' message —
+  // the recipient's bubble renders a ContactMessageCard with a "Message" button
+  // that opens a chat with them (see ChatView's onOpenContact). real_name/
+  // username are exactly what the requirements ask this payload to carry.
+  async function handleSendContact(peer: Conversation) {
+    const contact: ContactPayload = {
+      user_id: peer.peerId,
+      real_name: peerName(peer),
+      username: peer.peerUsername,
+    };
+    await sendRichMessage(`👤 Contact: ${contact.real_name}`, { type: 'contact', contact });
+  }
+
+  // Sends a poll — question/options come straight from CreatePollDialog.
+  async function handleSendPoll(poll: PollPayload) {
+    await sendRichMessage(`📊 Poll: ${poll.question}`, { type: 'poll', poll });
+  }
+
+  // Same idea as handleSendPoll, for CreateEventDialog's dummy EventPayload.
+  async function handleSendEvent(event: EventPayload) {
+    await sendRichMessage(`📅 Event: ${event.title}`, { type: 'event', event });
+  }
+
+  // Casts/changes the signed-in user's vote on a poll. Applies to this
+  // device's own local mirror first (see applyPollVote) so the tally and
+  // highlight update instantly regardless of network latency — same
+  // own-mirror-first pattern as handleTogglePin — then broadcasts a
+  // 'poll_vote' message so every other device sharing this poll converges on
+  // the same tally. That broadcast rides the exact same E2EE 'message'
+  // pipeline as every other message kind, but is never recorded as a bubble:
+  // recipients apply it as a patch instead (see handleIncoming/syncHistory's
+  // `type === 'poll_vote'` handling below).
+  async function handleVotePoll(pollMessage: ChatMessage, optionIndex: number) {
+    if (!user) return;
+    const roomId = activeGroupId
+      ? groupRoomId(activeGroupId)
+      : (conversations.find((c) => c.peerId === activePeerId)?.chatRoomId ?? null);
+    if (!roomId) return;
+
+    const messageId = crypto.randomUUID();
+    const timestamp = Date.now();
+
+    const updated = applyPollVote(roomId, pollMessage.id, user.user_id, optionIndex);
+    setMessagesByRoom((prev) => ({ ...prev, [roomId]: updated }));
+
+    await sendEnvelope(messageId, timestamp, '', {
+      type: 'poll_vote',
+      vote: { pollMessageId: pollMessage.id, optionIndex },
+    });
   }
 
   // ── Per-message actions (surfaced by ChatView's context menu) ──────────────
@@ -1675,13 +1912,33 @@ export function DashboardShell({
     setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
   }
 
-  function handleDeleteForEveryone(message: ChatMessage) {
-    if (!activeRoomId) return;
-    const room = activeRoomId;
-    const updated = deleteMessage(room, message.id);
-    setMessagesByRoom((prev) => ({ ...prev, [room]: updated }));
-    // Ask the hub to broadcast the deletion (and drop it from DynamoDB).
-    send({ type: 'delete_message', message_id: message.id, chat_room_id: room });
+  // "Delete for everyone": erases the message's content locally right away
+  // (own-mirror-first, same as handleTogglePin/handleVotePoll), then
+  // broadcasts a 'delete_notice' message so every other device sharing this
+  // room converges on the same erased state — see setMessageDeleted and the
+  // `type === 'delete_notice'` handling in handleIncoming/syncHistory below.
+  // This does NOT use the raw `delete_message` WebSocket frame the hub used
+  // to be sent: the backend has no handler for that frame type at all (it's
+  // silently dropped as a malformed chat message), so nothing ever reached
+  // the other participant. Routing it through the same encrypted 'message'
+  // pipeline every other message kind already uses needs no backend change
+  // and actually works. roomId is re-derived here rather than closing over
+  // the render-scoped `activeRoomId` — see handleVotePoll for why.
+  async function handleDeleteForEveryone(message: ChatMessage) {
+    const roomId = activeGroupId
+      ? groupRoomId(activeGroupId)
+      : (conversations.find((c) => c.peerId === activePeerId)?.chatRoomId ?? null);
+    if (!roomId) return;
+
+    const updated = setMessageDeleted(roomId, message.id);
+    setMessagesByRoom((prev) => ({ ...prev, [roomId]: updated }));
+
+    const messageId = crypto.randomUUID();
+    const timestamp = Date.now();
+    await sendEnvelope(messageId, timestamp, '', {
+      type: 'delete_notice',
+      deleteNotice: { deletedMessageId: message.id },
+    });
     gooeyToast('Message deleted for everyone');
   }
 
@@ -1911,6 +2168,7 @@ export function DashboardShell({
           group={activeGroup}
           messages={activeMessages}
           myUserId={user?.user_id ?? ''}
+          myAvatarUrl={user?.avatar_url}
           onSend={handleSend}
           onSendFile={handleSendFile}
           isSending={isSending}
@@ -1935,13 +2193,19 @@ export function DashboardShell({
           onTogglePin={handleTogglePin}
           onToggleKeep={handleToggleKeep}
           onDeleteForMe={handleDeleteForMe}
-          onDeleteForEveryone={handleDeleteForEveryone}
+          onDeleteForEveryone={(message) => void handleDeleteForEveryone(message)}
+          onAttachContact={() => setIsContactShareOpen(true)}
+          onAttachPoll={() => setIsPollComposerOpen(true)}
+          onAttachEvent={() => setIsEventComposerOpen(true)}
+          onOpenContact={openPeer}
+          onVotePoll={(message, optionIndex) => void handleVotePoll(message, optionIndex)}
         />
       ) : activeConversation ? (
         <ChatView
           conversation={activeConversation}
           messages={activeMessages}
           myUserId={user?.user_id ?? ''}
+          myAvatarUrl={user?.avatar_url}
           onSend={handleSend}
           onSendFile={handleSendFile}
           isSending={isSending}
@@ -1964,7 +2228,12 @@ export function DashboardShell({
           onTogglePin={handleTogglePin}
           onToggleKeep={handleToggleKeep}
           onDeleteForMe={handleDeleteForMe}
-          onDeleteForEveryone={handleDeleteForEveryone}
+          onDeleteForEveryone={(message) => void handleDeleteForEveryone(message)}
+          onAttachContact={() => setIsContactShareOpen(true)}
+          onAttachPoll={() => setIsPollComposerOpen(true)}
+          onAttachEvent={() => setIsEventComposerOpen(true)}
+          onOpenContact={openPeer}
+          onVotePoll={(message, optionIndex) => void handleVotePoll(message, optionIndex)}
         />
       ) : (
         <Layout
@@ -2089,6 +2358,29 @@ export function DashboardShell({
           messagePreview={forwardingMessage?.text ?? ''}
           onForward={(peerId) => handleForward(peerId, forwardingMessage)}
         />
+      )}
+
+      {user && (activeGroup || activeConversation) && (
+        <>
+          <ContactShareDialog
+            isOpen={isContactShareOpen}
+            onOpenChange={setIsContactShareOpen}
+            conversations={conversations}
+            onShare={(peer) => handleSendContact(peer)}
+          />
+          <CreatePollDialog
+            isOpen={isPollComposerOpen}
+            onOpenChange={setIsPollComposerOpen}
+            isSending={isSending}
+            onCreate={(poll) => void handleSendPoll(poll)}
+          />
+          <CreateEventDialog
+            isOpen={isEventComposerOpen}
+            onOpenChange={setIsEventComposerOpen}
+            isSending={isSending}
+            onCreate={(event) => void handleSendEvent(event)}
+          />
+        </>
       )}
     </AppShell>
   );

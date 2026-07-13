@@ -25,7 +25,7 @@ import {
   ArrowUturnRightIcon,
   CheckCircleIcon as CheckCircleOutlineIcon,
   FaceSmileIcon,
-  PaperClipIcon,
+  NoSymbolIcon,
   Square2StackIcon,
   TrashIcon,
   XMarkIcon,
@@ -41,11 +41,16 @@ import type { ChatSocketStatus } from '@/hooks/useChatSocket';
 import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation, type PeerStatus } from '@/lib/conversations';
 import { canManageGroup, memberName, type Group } from '@/lib/groups';
-import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
+import type { ChatMessage, ReplyPreview } from '@/lib/messageStore';
+import { AttachmentMenu } from './AttachmentMenu';
+import { ContactMessageCard } from './ContactMessageCard';
+import { DeliveryTicks } from './DeliveryTicks';
 import { EmojiPicker } from './EmojiPicker';
+import { EventMessageCard } from './EventMessageCard';
 import { GroupContextMenu } from './GroupContextMenu';
 import { MessageAttachment } from './MessageAttachment';
 import { MessageContextMenu } from './MessageContextMenu';
+import { PollMessageCard } from './PollMessageCard';
 import { TypingIndicator } from './TypingIndicator';
 
 const CONNECTION_LABEL: Record<ChatSocketStatus, string> = {
@@ -58,12 +63,6 @@ const CONNECTION_VARIANT: Record<ChatSocketStatus, 'success' | 'warning' | 'neut
   open: 'success',
   connecting: 'neutral',
   closed: 'warning',
-};
-
-const STATUS_LABEL: Record<MessageStatus, string> = {
-  sent: 'Sent',
-  delivered: 'Delivered',
-  read: 'Read',
 };
 
 // While a peer keeps typing we re-emit "typing" on this cadence (a heartbeat) so
@@ -82,6 +81,12 @@ const MAX_COMPOSER_HEIGHT_PX = 160;
 // small documents without risking hanging the browser on the encrypt step,
 // which reads the whole file into memory at once.
 const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+// How long the reply-quote "jump to original message" flash stays green
+// before fading out — shared by the highlight overlay's own animation
+// duration and scrollToMessage's cleanup timer, so the two can't drift out
+// of sync (the timer clearing `highlight` mid-fade would cut the animation
+// short instead of letting it finish).
+const HIGHLIGHT_DURATION_SEC = 5;
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {
@@ -161,32 +166,6 @@ function dayLabel(timestamp: number): string {
   });
 }
 
-// WhatsApp-style delivery ticks, sized to sit next to the timestamp inside the
-// sender bubble: one tick when only the server has it, two once the recipient
-// is online and received it, and a deep-blue double tick once they've read it —
-// which "lights up" against the lighter logo-blue bubble.
-function DeliveryTicks({ status }: { status: MessageStatus }) {
-  const isDouble = status !== 'sent';
-  const isRead = status === 'read';
-  const color = isRead ? 'text-[#0b3f8f]' : status === 'delivered' ? 'text-white/90' : 'text-white/70';
-  return (
-    <span role="img" aria-label={STATUS_LABEL[status]} className={`inline-flex ${color}`}>
-      <svg
-        width="16"
-        height="11"
-        viewBox="0 0 16 11"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden="true">
-        <path d="M1 6l3 3 5.5-6.5" />
-        {isDouble && <path d="M6.5 9l5.5-6.5" />}
-      </svg>
-    </span>
-  );
-}
 
 // "Forwarded" label pinned to the top of a bubble, above the username/text.
 // Muted, smaller and italic to sit quietly out of the way like other chat
@@ -210,15 +189,28 @@ function ForwardedTag({ tone }: { tone: 'sender' | 'receiver' }) {
 // the tone matches the bubble it sits on — a translucent white on the blue
 // sender bubble, a black tint on the light receiver bubble — so it never breaks
 // the existing colour scheme. The preview text is pre-truncated by the caller.
-function ReplyQuote({ replyTo, tone }: { replyTo: ReplyPreview; tone: 'sender' | 'receiver' }) {
+// Tapping the quote jumps to the original message and briefly flashes it —
+// WhatsApp-style — via onJumpToReply (see ChatView's scrollToMessage).
+function ReplyQuote({
+  replyTo,
+  tone,
+  onJumpToReply,
+}: {
+  replyTo: ReplyPreview;
+  tone: 'sender' | 'receiver';
+  onJumpToReply: () => void;
+}) {
   const isSender = tone === 'sender';
   return (
-    <div
+    <button
+      type="button"
+      onClick={onJumpToReply}
+      aria-label={`Jump to ${replyTo.senderName}'s original message`}
       className={[
-        'mb-1.5 overflow-hidden rounded-lg border-l-4 py-1 pl-2 pr-2.5',
+        'mb-1.5 block w-full overflow-hidden rounded-lg border-l-4 py-1 pl-2 pr-2.5 text-left transition-colors',
         isSender
-          ? 'border-white/70 bg-white/10'
-          : 'border-[var(--vibe-blue)] bg-black/5 dark:bg-white/10',
+          ? 'border-white/70 bg-white/10 hover:bg-white/15'
+          : 'border-[var(--vibe-blue)] bg-black/5 hover:bg-black/[0.07] dark:bg-white/10 dark:hover:bg-white/15',
       ].join(' ')}>
       <span
         className={`block text-xs font-semibold ${isSender ? 'text-white' : 'text-[var(--vibe-blue)]'}`}>
@@ -227,7 +219,7 @@ function ReplyQuote({ replyTo, tone }: { replyTo: ReplyPreview; tone: 'sender' |
       <span className={`block truncate text-xs ${isSender ? 'text-white/75' : 'text-gray-500 dark:text-gray-400'}`}>
         {replyTo.textPreview}
       </span>
-    </div>
+    </button>
   );
 }
 
@@ -236,6 +228,80 @@ function ReplyQuote({ replyTo, tone }: { replyTo: ReplyPreview; tone: 'sender' |
 function previewText(text: string): string {
   const oneLine = text.replace(/\s+/g, ' ').trim();
   return oneLine.length > 120 ? `${oneLine.slice(0, 120)}…` : oneLine;
+}
+
+// Picks what fills a bubble: an attachment card (image/document/audio — see
+// MessageAttachment, which itself branches on mimeType), a rich-content card
+// (contact/poll/event), or plain text — in that order, matching how the
+// fields on ChatMessage are mutually exclusive by construction (see
+// DashboardShell's senders). Shared by both the sender and receiver branches
+// below so they can't drift out of sync.
+function MessageBody({
+  message,
+  tone,
+  myUserId,
+  onOpenContact,
+  onVotePoll,
+  resolveVoter,
+}: {
+  message: ChatMessage;
+  tone: 'sender' | 'receiver';
+  myUserId: string;
+  onOpenContact: (peerId: string) => void;
+  onVotePoll: (message: ChatMessage, optionIndex: number) => void;
+  resolveVoter: (voterId: string) => { name: string; avatarUrl?: string };
+}) {
+  if (message.isDeleted) {
+    return (
+      <p
+        className={`flex items-center gap-1.5 text-sm italic ${tone === 'sender' ? 'text-white/70' : 'text-gray-400 dark:text-gray-500'}`}>
+        <NoSymbolIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        This message was deleted
+      </p>
+    );
+  }
+  if (message.file) {
+    return (
+      <MessageAttachment
+        file={message.file}
+        tone={tone}
+        timestamp={message.timestamp}
+        status={message.status}
+        isKept={message.kept}
+        isPinned={message.pinned}
+      />
+    );
+  }
+  if (message.type === 'contact' && message.contact) {
+    const contact = message.contact;
+    return (
+      <ContactMessageCard contact={contact} tone={tone} onMessage={() => onOpenContact(contact.user_id)} />
+    );
+  }
+  if (message.type === 'poll' && message.poll) {
+    return (
+      <PollMessageCard
+        poll={message.poll}
+        tone={tone}
+        myUserId={myUserId}
+        onVote={(optionIndex) => onVotePoll(message, optionIndex)}
+        resolveVoter={resolveVoter}
+      />
+    );
+  }
+  if (message.type === 'event' && message.event) {
+    return <EventMessageCard event={message.event} tone={tone} />;
+  }
+  return (
+    <p
+      className={
+        tone === 'sender'
+          ? 'whitespace-pre-wrap break-words text-sm leading-relaxed'
+          : 'whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200'
+      }>
+      {message.text}
+    </p>
+  );
 }
 
 // Callbacks a bubble needs; grouped so both the row and its context menu share
@@ -250,11 +316,16 @@ interface MessageActions {
   onReport: (message: ChatMessage) => void;
   onDeleteForMe: (message: ChatMessage) => void;
   onDeleteForEveryone: (message: ChatMessage) => void;
+  /** The "Message" button on a received Contact card — opens a chat with them. */
+  onOpenContact: (peerId: string) => void;
+  /** Tapping an option on a Poll card — casts/changes the signed-in user's vote. */
+  onVotePoll: (message: ChatMessage, optionIndex: number) => void;
 }
 
 function MessageRow({
   message,
   isMine,
+  myUserId,
   senderName,
   senderAvatarUrl,
   senderColor,
@@ -267,9 +338,14 @@ function MessageRow({
   isSelected,
   onToggleSelect,
   showReadReceipt,
+  resolveVoter,
+  onJumpToReply,
+  isHighlighted,
+  highlightNonce,
 }: {
   message: ChatMessage;
   isMine: boolean;
+  myUserId: string;
   // Resolved by the parent so the row renders identically for DMs (always the
   // peer) and group rooms (looked up per message from the roster).
   senderName: string;
@@ -292,6 +368,16 @@ function MessageRow({
   // Messenger/Instagram-style "seen" marker: when true this is the newest of
   // our messages the recipient has read, so their avatar sits below the bubble.
   showReadReceipt: boolean;
+  // Resolves a voter id to display info for a Poll card's avatar strip.
+  resolveVoter: (voterId: string) => { name: string; avatarUrl?: string };
+  // Tapping this message's own reply quote (if any) scrolls to and flashes
+  // whatever message it's quoting — see ChatView's scrollToMessage.
+  onJumpToReply: (messageId: string) => void;
+  // True when this is the message someone just jumped to — briefly flashes
+  // the bubble (see the highlight overlay below). highlightNonce forces the
+  // flash to replay even if the same message is jumped to again in a row.
+  isHighlighted: boolean;
+  highlightNonce: number;
 }) {
   // The hover chevron lives in the bubble's top-right corner — on both our own
   // and the peer's bubbles it stays pinned to the far right so the trigger is
@@ -359,8 +445,20 @@ function MessageRow({
     onMenuOpenChange(true);
   };
 
+  // A plain image/video message (no reply/forward context to make room for)
+  // drops the bubble's own padding/background entirely — the media fills the
+  // whole rounded shape edge-to-edge, WhatsApp/Instagram-style, with its
+  // timestamp overlaid on it (see MessageAttachment) instead of sitting in
+  // the normal text row below. A reply or forward tag needs the padded bubble
+  // to sit inside, so those cases keep the ordinary chrome.
+  const isMediaMessage =
+    (message.file?.mimeType.startsWith('image/') || message.file?.mimeType.startsWith('video/')) ??
+    false;
+  const isEdgeToEdgeMedia = isMediaMessage && !message.isForwarded && !message.replyTo;
+
   return (
     <div
+      id={`message-${message.id}`}
       {...rowSelectProps}
       className={[
         'group -mx-2 flex items-center gap-2 rounded-2xl px-2 py-0.5 transition-colors',
@@ -403,26 +501,51 @@ function MessageRow({
         <div className="vibe-msg-in flex flex-1 origin-bottom-right items-end justify-end gap-1.5">
           <div
             onContextMenu={openMenuOnRightClick}
-            className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
+            className={[
+              'relative max-w-[75%] rounded-2xl rounded-br-md text-white shadow-sm',
+              isEdgeToEdgeMedia
+                ? ''
+                : 'bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]',
+            ].join(' ')}>
+            {isHighlighted && (
+              <motion.div
+                key={highlightNonce}
+                initial={{ opacity: 0.55 }}
+                animate={{ opacity: 0 }}
+                transition={{ duration: HIGHLIGHT_DURATION_SEC, ease: 'easeOut' }}
+                className="pointer-events-none absolute inset-0 rounded-2xl bg-green-400"
+                aria-hidden="true"
+              />
+            )}
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="sender" />}
-            {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="sender" />}
-            {message.file && <MessageAttachment file={message.file} tone="sender" />}
-            {!message.file && (
-              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-                {message.text}
-              </p>
+            {message.replyTo && (
+              <ReplyQuote
+                replyTo={message.replyTo}
+                tone="sender"
+                onJumpToReply={() => onJumpToReply(message.replyTo!.messageId)}
+              />
             )}
-            <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
-              {message.kept && (
-                <BookmarkSolidIcon className="h-3 w-3 text-white/85" aria-label="Kept" />
-              )}
-              {message.pinned && (
-                <MapPinSolidIcon className="h-3 w-3 text-white/85" aria-label="Pinned" />
-              )}
-              {formatTime(message.timestamp)}
-              {message.status && <DeliveryTicks status={message.status} />}
-            </span>
+            <MessageBody
+              message={message}
+              tone="sender"
+              myUserId={myUserId}
+              onOpenContact={actions.onOpenContact}
+              onVotePoll={actions.onVotePoll}
+              resolveVoter={resolveVoter}
+            />
+            {!isEdgeToEdgeMedia && (
+              <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
+                {message.kept && (
+                  <BookmarkSolidIcon className="h-3 w-3 text-white/85" aria-label="Kept" />
+                )}
+                {message.pinned && (
+                  <MapPinSolidIcon className="h-3 w-3 text-white/85" aria-label="Pinned" />
+                )}
+                {formatTime(message.timestamp)}
+                {message.status && <DeliveryTicks status={message.status} />}
+              </span>
+            )}
           </div>
           {showReadReceipt && (
             // The recipient's avatar, tucked just to the right of the bubble and
@@ -463,30 +586,58 @@ function MessageRow({
           <Avatar src={resolveAvatarUrl(senderAvatarUrl)} name={senderName} size="small" />
           <div
             onContextMenu={openMenuOnRightClick}
-            className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
+            className={[
+              'relative max-w-[75%] rounded-2xl rounded-tl-md shadow-sm',
+              isEdgeToEdgeMedia
+                ? ''
+                : 'bg-white py-2.5 pl-4 pr-9 ring-1 ring-black/[0.03] dark:bg-gray-900',
+            ].join(' ')}>
+            {isHighlighted && (
+              <motion.div
+                key={highlightNonce}
+                initial={{ opacity: 0.45 }}
+                animate={{ opacity: 0 }}
+                transition={{ duration: HIGHLIGHT_DURATION_SEC, ease: 'easeOut' }}
+                className="pointer-events-none absolute inset-0 rounded-2xl bg-green-400"
+                aria-hidden="true"
+              />
+            )}
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span
-              className="mb-0.5 block text-[13px] font-semibold"
+              className={[
+                'mb-0.5 block text-[13px] font-semibold',
+                isEdgeToEdgeMedia ? 'px-1 pt-1' : '',
+              ].join(' ')}
               style={{ color: senderColor }}>
               {senderName}
             </span>
-            {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
-            {message.file && <MessageAttachment file={message.file} tone="receiver" />}
-            {!message.file && (
-              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">
-                {message.text}
-              </p>
+            {message.replyTo && (
+              <ReplyQuote
+                replyTo={message.replyTo}
+                tone="receiver"
+                onJumpToReply={() => onJumpToReply(message.replyTo!.messageId)}
+              />
             )}
-            <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-400 dark:text-gray-500">
-              {message.kept && (
-                <BookmarkSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Kept" />
-              )}
-              {message.pinned && (
-                <MapPinSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Pinned" />
-              )}
-              {formatTime(message.timestamp)}
-            </span>
+            <MessageBody
+              message={message}
+              tone="receiver"
+              myUserId={myUserId}
+              onOpenContact={actions.onOpenContact}
+              onVotePoll={actions.onVotePoll}
+              resolveVoter={resolveVoter}
+            />
+            {!isEdgeToEdgeMedia && (
+              <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-400 dark:text-gray-500">
+                {message.kept && (
+                  <BookmarkSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Kept" />
+                )}
+                {message.pinned && (
+                  <MapPinSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Pinned" />
+                )}
+                {formatTime(message.timestamp)}
+              </span>
+            )}
           </div>
         </div>
           )}
@@ -501,6 +652,7 @@ export function ChatView({
   group = null,
   messages,
   myUserId,
+  myAvatarUrl,
   onSend,
   onSendFile,
   isSending,
@@ -523,6 +675,11 @@ export function ChatView({
   onToggleKeep,
   onDeleteForMe,
   onDeleteForEveryone,
+  onAttachContact,
+  onAttachPoll,
+  onAttachEvent,
+  onOpenContact,
+  onVotePoll,
 }: {
   /** The open DM. Exactly one of `conversation`/`group` is set. */
   conversation?: Conversation | null;
@@ -531,6 +688,10 @@ export function ChatView({
   group?: Group | null;
   messages: ChatMessage[];
   myUserId: string;
+  /** The signed-in user's own avatar — resolveVoter's "You" case (a Poll
+   *  card's voter avatar strip) is the only thing that needs it; nothing
+   *  else in this view renders our own photo. */
+  myAvatarUrl?: string;
   onSend: (text: string, replyTo?: ReplyPreview) => void;
   /** Encrypts, uploads, and sends a file/image attachment (see DashboardShell's
    *  handleSendFile). Omitted entirely disables the attach-file button. */
@@ -576,6 +737,16 @@ export function ChatView({
   onToggleKeep: (message: ChatMessage) => void;
   onDeleteForMe: (message: ChatMessage) => void;
   onDeleteForEveryone: (message: ChatMessage) => void;
+  /** Opens the "Share a contact" picker — the composer's Contact attachment item. */
+  onAttachContact?: () => void;
+  /** Opens the "Create poll" placeholder — the composer's Poll attachment item. */
+  onAttachPoll?: () => void;
+  /** Opens the "Create event" placeholder — the composer's Event attachment item. */
+  onAttachEvent?: () => void;
+  /** Opens a chat with the given peer — the "Message" button on a received Contact card. */
+  onOpenContact?: (peerId: string) => void;
+  /** Casts/changes the signed-in user's vote — tapping an option on a Poll card. */
+  onVotePoll?: (message: ChatMessage, optionIndex: number) => void;
 }) {
   const [draft, setDraft] = useState('');
   const [replyingTo, setReplyingTo] = useState<ChatMessage | null>(null);
@@ -584,9 +755,42 @@ export function ChatView({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false);
   const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
+  const [isAttachMenuOpen, setIsAttachMenuOpen] = useState(false);
+  // Drives the reply-quote "jump to original message" flow (see ReplyQuote/
+  // scrollToMessage below): which message briefly flashes, and a nonce so
+  // clicking the same reply again replays the flash instead of no-op'ing on
+  // an unchanged id.
+  const [highlight, setHighlight] = useState<{ id: string; nonce: number } | null>(null);
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    return () => {
+      if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    };
+  }, []);
+
+  // Jump-to-original-message, WhatsApp-style: tapping a reply quote (see
+  // ReplyQuote) scrolls the quoted message into view and briefly flashes it
+  // (see the highlight overlay in MessageRow's bubble divs) so it's obvious
+  // which bubble you landed on. Only reachable this way — nothing else in
+  // the view sets `highlight`. A no-op with a toast if the original has
+  // scrolled out of what's currently loaded (older history not yet synced).
+  function scrollToMessage(messageId: string) {
+    const el = document.getElementById(`message-${messageId}`);
+    if (!el) {
+      gooeyToast('Original message not found', {
+        description: 'It may be further back in this chat’s history.',
+      });
+      return;
+    }
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setHighlight((prev) => ({ id: messageId, nonce: (prev?.nonce ?? 0) + 1 }));
+    if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current);
+    highlightTimerRef.current = setTimeout(() => setHighlight(null), HIGHLIGHT_DURATION_SEC * 1000);
+  }
 
   // Grows/shrinks the textarea to fit its content, capped at
   // MAX_COMPOSER_HEIGHT_PX — shared by typing (onChange) and picking an emoji.
@@ -636,6 +840,17 @@ export function ChatView({
     onSendFile?.(file);
   }
 
+  // Sets the hidden input's accept filter before opening the native file
+  // picker, so "Photos & videos" and "Document" reuse the same input/upload
+  // path (handleFileSelected → onSendFile's E2EE encrypt-and-upload flow)
+  // while still scoping what the OS picker shows.
+  function openFilePicker(accept: string) {
+    const el = fileInputRef.current;
+    if (!el) return;
+    el.accept = accept;
+    el.click();
+  }
+
   // ── DM/group resolution ─────────────────────────────────────────────────
   // Everything below renders from these instead of touching conversation/group
   // directly, so the bubbles, header, and typing UI stay identical across both
@@ -650,6 +865,14 @@ export function ChatView({
     group
       ? group.members.find((m) => m.user_id === senderId)?.avatar_url
       : conversation?.peerAvatarUrl;
+
+  // Resolves a Poll voter id to display info for the card's avatar strip —
+  // senderNameOf/senderAvatarOf only ever resolve to "the other person" (the
+  // DM peer, or a group member), so "me" needs its own branch here.
+  const resolveVoter = (voterId: string): { name: string; avatarUrl?: string } =>
+    voterId === myUserId
+      ? { name: 'You', avatarUrl: myAvatarUrl }
+      : { name: senderNameOf(voterId), avatarUrl: senderAvatarOf(voterId) };
 
   // Assigns each group member a name color that's unique within THIS room —
   // sorted by user id (not join order, which can shift if someone leaves and
@@ -820,6 +1043,8 @@ export function ChatView({
     },
     onDeleteForMe,
     onDeleteForEveryone,
+    onOpenContact: (peerId) => onOpenContact?.(peerId),
+    onVotePoll: (message, optionIndex) => onVotePoll?.(message, optionIndex),
   };
 
   const selectedMessages = messages.filter((m) => selectedIds.has(m.id));
@@ -1055,6 +1280,7 @@ export function ChatView({
                   <MessageRow
                     message={message}
                     isMine={isMine}
+                    myUserId={myUserId}
                     senderName={senderNameOf(message.senderId)}
                     senderAvatarUrl={senderAvatarOf(message.senderId)}
                     senderColor={senderColorOf(message.senderId)}
@@ -1068,6 +1294,10 @@ export function ChatView({
                     onToggleSelect={toggleSelect}
                     // Read receipts are DM-only; group rooms have no read frames.
                     showReadReceipt={!isGroup && isMine && message.id === lastReadMessageId}
+                    resolveVoter={resolveVoter}
+                    onJumpToReply={scrollToMessage}
+                    isHighlighted={highlight?.id === message.id}
+                    highlightNonce={highlight?.id === message.id ? highlight.nonce : 0}
                   />
                 )}
               </Fragment>
@@ -1147,6 +1377,18 @@ export function ChatView({
                 event.preventDefault();
                 handleSend();
               }}>
+              <AttachmentMenu
+                isOpen={isAttachMenuOpen}
+                onOpenChange={setIsAttachMenuOpen}
+                isDisabled={isPeerDeleted || !onSendFile}
+                onPickPhotosAndVideos={() => openFilePicker('image/*,video/*')}
+                onPickDocument={() => openFilePicker('*')}
+                onPickAudio={() => openFilePicker('audio/*')}
+                onOpenContactShare={() => onAttachContact?.()}
+                onOpenPollComposer={() => onAttachPoll?.()}
+                onOpenEventComposer={() => onAttachEvent?.()}
+              />
+
               <Popover
                 isOpen={isEmojiPickerOpen}
                 onOpenChange={setIsEmojiPickerOpen}
@@ -1217,14 +1459,6 @@ export function ChatView({
                 className="sr-only"
                 onChange={handleFileSelected}
               />
-              <button
-                type="button"
-                aria-label="Attach file"
-                disabled={isPeerDeleted || !onSendFile}
-                onClick={() => fileInputRef.current?.click()}
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
-                <PaperClipIcon className="h-6 w-6" />
-              </button>
 
               <button
                 type="submit"
