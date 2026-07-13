@@ -32,6 +32,23 @@ export interface ReplyPreview {
   textPreview: string;
 }
 
+// MessageFileMeta describes an E2EE file/image attachment. The AES key and IV
+// are the raw material needed to decrypt the ciphertext stored at `key` in
+// S3 — safe to carry here in the clear (as far as this interface is
+// concerned) only because the whole envelope this lives inside is itself
+// encrypted under the conversation/group's shared key before it ever leaves
+// the device (see encodeMessageBody/encryptText). `key` is an S3 object key,
+// not a URL: fetching it requires exchanging it for a fresh presigned GET via
+// lib/upload.ts's requestDownloadUrl every time it's rendered.
+export interface MessageFileMeta {
+  key: string;
+  keyB64: string;
+  ivB64: string;
+  name: string;
+  mimeType: string;
+  size: number;
+}
+
 export interface ChatMessage {
   id: string;
   senderId: string;
@@ -40,6 +57,9 @@ export interface ChatMessage {
   status?: MessageStatus;
   /** Set when this message is a reply — drives the in-bubble quoted block. */
   replyTo?: ReplyPreview;
+  /** Set when this message carries an encrypted file/image attachment instead
+   *  of (or alongside) plain text — see MessageAttachment.tsx. */
+  file?: MessageFileMeta;
   /** Pinned for the whole room (see pin_message over the WebSocket). Local mirror
    *  of the shared pin state so the bubble + pinned banner render without a refetch. */
   pinned?: boolean;
@@ -69,6 +89,12 @@ interface MessageEnvelope {
   replyTo?: ReplyPreview;
   isForwarded?: boolean;
   isSystem?: boolean;
+  // File attachments (see MessageFileMeta) ride inside the same encrypted
+  // envelope as text: the AES file key/IV need E2EE protection exactly like
+  // a message body does, and this envelope's own encryptText call under the
+  // conversation/group's shared key is "the existing E2EE logic" that gives
+  // them it — no separate encryption pass needed.
+  file?: MessageFileMeta;
 }
 
 // Metadata that rides inside the encrypted envelope alongside the text. Carried
@@ -80,6 +106,7 @@ export interface MessageMeta {
   replyTo?: ReplyPreview;
   isForwarded?: boolean;
   isSystem?: boolean;
+  file?: MessageFileMeta;
 }
 
 // encodeMessageBody produces the string handed to encryptText — a JSON envelope
@@ -90,6 +117,7 @@ export function encodeMessageBody(text: string, meta: MessageMeta = {}): string 
   if (meta.replyTo) envelope.replyTo = meta.replyTo;
   if (meta.isForwarded) envelope.isForwarded = true;
   if (meta.isSystem) envelope.isSystem = true;
+  if (meta.file) envelope.file = meta.file;
   return JSON.stringify(envelope);
 }
 
@@ -97,9 +125,13 @@ export function encodeMessageBody(text: string, meta: MessageMeta = {}): string 
 // that isn't a v1 envelope (a pre-envelope plain-text message, or a peer on an
 // older build) falls back to being treated as the whole body — so old and new
 // messages both render correctly.
-export function decodeMessageBody(
-  raw: string,
-): { text: string; replyTo?: ReplyPreview; isForwarded?: boolean; isSystem?: boolean } {
+export function decodeMessageBody(raw: string): {
+  text: string;
+  replyTo?: ReplyPreview;
+  isForwarded?: boolean;
+  isSystem?: boolean;
+  file?: MessageFileMeta;
+} {
   try {
     const parsed = JSON.parse(raw) as Partial<MessageEnvelope>;
     if (parsed && parsed.v === 1 && typeof parsed.text === 'string') {
@@ -108,6 +140,7 @@ export function decodeMessageBody(
         replyTo: parsed.replyTo,
         isForwarded: parsed.isForwarded,
         isSystem: parsed.isSystem,
+        file: parsed.file,
       };
     }
   } catch {

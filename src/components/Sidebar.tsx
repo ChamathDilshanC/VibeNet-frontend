@@ -40,6 +40,12 @@ import type { Group } from '@/lib/groups';
 import type { DashboardView } from './DashboardShell';
 import type { SettingsSection } from './SettingsPanel';
 
+// unreadBadgeLabel caps the displayed count the way WhatsApp/Telegram do, so a
+// long-neglected chat's badge doesn't blow out the row width.
+function unreadBadgeLabel(count: number): string {
+  return count > 99 ? '99+' : String(count);
+}
+
 export function Sidebar({
   user,
   conversations,
@@ -48,6 +54,8 @@ export function Sidebar({
   activeGroupId,
   pendingInviteCount,
   onlinePeers,
+  unreadByPeer,
+  unreadByGroup,
   onSelectConversation,
   onSelectGroup,
   onNewChat,
@@ -66,6 +74,10 @@ export function Sidebar({
   // Number of pending group invitations — badges the "Invites" item.
   pendingInviteCount: number;
   onlinePeers: ReadonlySet<string>;
+  // Unread message counts (see lib/readState), keyed by peer id / group id.
+  // Missing entries render as no badge, same as 0.
+  unreadByPeer: Readonly<Record<string, number>>;
+  unreadByGroup: Readonly<Record<string, number>>;
   onSelectConversation: (peerId: string) => void;
   onSelectGroup: (groupId: string) => void;
   onNewChat: () => void;
@@ -104,7 +116,7 @@ export function Sidebar({
         onCollapsedChange: setIsCollapsed,
         hasButton: false,
       }}
-      resizable={{ defaultWidth: 320, minWidth: 240, maxWidth: 420 }}
+      resizable={{ defaultWidth: 360, minWidth: 280, maxWidth: 480 }}
       header={
         <div className="flex items-center justify-between gap-1 px-3 py-2">
           {/* Logo can't fit the 72px collapsed rail — the chevron stands in alone. */}
@@ -209,27 +221,39 @@ export function Sidebar({
       <Divider />
       <SideNavSection title="Groups">
         <SideNavItem label="Create group" icon={PlusIcon} onClick={onCreateGroup} />
-        {groups.map((group) => (
-          <SideNavItem
-            key={group.group_id}
-            label={group.name}
-            icon={
-              <Avatar
-                src={resolveAvatarUrl(group.avatar_url)}
-                name={group.name}
-                size="tiny"
-              />
-            }
-            isSelected={group.group_id === activeGroupId}
-            onClick={() => onSelectGroup(group.group_id)}
-            endContent={
-              <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
-                <UserGroupIcon className="h-3.5 w-3.5" aria-hidden="true" />
-                {group.members.length}
-              </span>
-            }
-          />
-        ))}
+        {groups.map((group) => {
+          const unread = unreadByGroup[group.group_id] ?? 0;
+          return (
+            <SideNavItem
+              key={group.group_id}
+              label={group.name}
+              icon={
+                <Avatar
+                  src={resolveAvatarUrl(group.avatar_url)}
+                  name={group.name}
+                  size="tiny"
+                />
+              }
+              isSelected={group.group_id === activeGroupId}
+              onClick={() => onSelectGroup(group.group_id)}
+              endContent={
+                <div className="flex items-center gap-1.5">
+                  {unread > 0 && (
+                    <Badge
+                      variant="info"
+                      label={unreadBadgeLabel(unread)}
+                      aria-label={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
+                    />
+                  )}
+                  <span className="flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500">
+                    <UserGroupIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                    {group.members.length}
+                  </span>
+                </div>
+              }
+            />
+          );
+        })}
       </SideNavSection>
       <Divider />
       <SideNavSection title="Direct messages">
@@ -241,6 +265,7 @@ export function Sidebar({
           conversations.map((conversation) => {
             const isOnline = onlinePeers.has(conversation.peerId);
             const name = peerName(conversation);
+            const unread = unreadByPeer[conversation.peerId] ?? 0;
             return (
               <SideNavItem
                 key={conversation.peerId}
@@ -255,10 +280,19 @@ export function Sidebar({
                 isSelected={conversation.peerId === activePeerId}
                 onClick={() => onSelectConversation(conversation.peerId)}
                 endContent={
-                  <StatusDot
-                    variant={isOnline ? 'success' : 'neutral'}
-                    label={isOnline ? 'Online' : 'Offline'}
-                  />
+                  <div className="flex items-center gap-1.5">
+                    {unread > 0 && (
+                      <Badge
+                        variant="info"
+                        label={unreadBadgeLabel(unread)}
+                        aria-label={`${unread} unread ${unread === 1 ? 'message' : 'messages'}`}
+                      />
+                    )}
+                    <StatusDot
+                      variant={isOnline ? 'success' : 'neutral'}
+                      label={isOnline ? 'Online' : 'Offline'}
+                    />
+                  </div>
                 }
               />
             );

@@ -67,8 +67,12 @@ import {
   setMessagePinned,
   setMessageStatus,
   type ChatMessage,
+  type MessageFileMeta,
   type ReplyPreview,
 } from '@/lib/messageStore';
+import { encryptFile } from '@/lib/fileCrypto';
+import { requestPresignedUpload, uploadEncryptedBlob } from '@/lib/upload';
+import { markRoomRead, unreadCount } from '@/lib/readState';
 import { useChatSocket } from '@/hooks/useChatSocket';
 import { useE2EEKeys } from '@/hooks/useE2EEKeys';
 import { ChatView } from './ChatView';
@@ -515,7 +519,7 @@ export function DashboardShell({
           for (const m of pending) {
             try {
               const plaintext = await decryptText(key, m.ciphertext, m.nonce);
-              const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
+              const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
               ok.push({
                 id: m.message_id,
                 senderId: m.sender_id,
@@ -524,6 +528,7 @@ export function DashboardShell({
                 replyTo,
                 isForwarded,
                 isSystem,
+                file,
               });
             } catch {
               // Expected for history predating a key rotation/loss — summarised
@@ -822,7 +827,7 @@ export function DashboardShell({
           if (!entry) return;
           try {
             const plaintext = await decryptText(entry.key, ciphertext, nonce);
-            const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
+            const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
             recordMessage(chatRoomId, {
               id: messageId,
               senderId,
@@ -831,6 +836,7 @@ export function DashboardShell({
               isForwarded: isForwarded ?? frameForwarded,
               isSystem,
               replyTo,
+              file,
             });
             // A message from them supersedes their typing state — clear it now
             // rather than waiting out the timeout.
@@ -888,7 +894,7 @@ export function DashboardShell({
           // Unwrap the envelope: pulls out the text and any metadata the sender
           // embedded — reply context and the forwarded flag (legacy plain-text
           // bodies decode to just the text).
-          const { text, replyTo, isForwarded } = decodeMessageBody(plaintext);
+          const { text, replyTo, isForwarded, file } = decodeMessageBody(plaintext);
           recordMessage(chatRoomId, {
             id: messageId,
             senderId,
@@ -900,6 +906,7 @@ export function DashboardShell({
             // backend starts relaying it.
             isForwarded: isForwarded ?? frameForwarded,
             replyTo,
+            file,
           });
         } catch {
           // Undecryptable even after a key-refresh retry — genuinely
@@ -1325,7 +1332,7 @@ export function DashboardShell({
         for (const m of pending) {
           try {
             const plaintext = await decryptText(entry.key, m.ciphertext, m.nonce);
-            const { text, replyTo, isForwarded, isSystem } = decodeMessageBody(plaintext);
+            const { text, replyTo, isForwarded, isSystem, file } = decodeMessageBody(plaintext);
             decrypted.push({
               id: m.message_id,
               senderId: m.sender_id,
@@ -1334,6 +1341,7 @@ export function DashboardShell({
               replyTo,
               isForwarded,
               isSystem,
+              file,
             });
           } catch {
             // Encrypted under a key generation this device can't recover — skip.
@@ -1530,6 +1538,96 @@ export function DashboardShell({
     }
   }
 
+  // fileMessageCaption is the plaintext fallback shown for a file/image
+  // message — it rides in the envelope's ordinary `text` field alongside the
+  // structured `file` metadata, so search, notifications, and any client that
+  // doesn't understand `file` yet all still show something readable.
+  function fileMessageCaption(name: string, mimeType: string): string {
+    return mimeType.startsWith('image/') ? `📷 ${name}` : `📎 ${name}`;
+  }
+
+  // Encrypts a file/image entirely client-side (see lib/fileCrypto), uploads
+  // the ciphertext to S3 via a presigned URL (see lib/upload) — the backend
+  // and any database/S3 admin only ever see that ciphertext — then wraps the
+  // resulting AES key/IV/S3 object key inside the same encrypted envelope
+  // already used for text (encodeMessageBody's `file` field) and sends it
+  // through the identical WebSocket 'message' pipeline as handleSend/
+  // handleSendGroup. No backend changes were needed for the messaging side of
+  // this: the server has always treated ciphertext as an opaque blob.
+  async function handleSendFile(file: File) {
+    if (!user) return;
+    const group = activeGroupId ? groups.find((g) => g.group_id === activeGroupId) : undefined;
+    const conversation = activeGroupId
+      ? undefined
+      : conversations.find((c) => c.peerId === activePeerId);
+    if (!group && !conversation) return;
+
+    setIsSending(true);
+    setSendError(null);
+    try {
+      // Resolve the room's encryption key first — the same key text messages
+      // use — so a doomed send fails before spending a network round-trip on
+      // the (potentially large) encrypt-and-upload step below.
+      let sharedKey: CryptoKey | null = null;
+      if (group) {
+        const entry = await getGroupKey(group);
+        if (!entry) {
+          throw new Error('Could not access the group encryption key. Try reopening the group.');
+        }
+        sharedKey = entry.key;
+      } else {
+        sharedKey = await getSharedKey(conversation!);
+        if (!sharedKey) throw new Error('Encryption keys are not ready yet.');
+      }
+
+      const { blob, keyB64, ivB64 } = await encryptFile(file);
+      const { uploadUrl, fileKey } = await requestPresignedUpload(file.name, file.type);
+      await uploadEncryptedBlob(uploadUrl, blob);
+
+      const fileMeta: MessageFileMeta = {
+        key: fileKey,
+        keyB64,
+        ivB64,
+        name: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+      };
+      const caption = fileMessageCaption(file.name, fileMeta.mimeType);
+
+      const { ciphertext, nonce } = await encryptText(
+        sharedKey,
+        encodeMessageBody(caption, { file: fileMeta }),
+      );
+      const messageId = crypto.randomUUID();
+      const timestamp = Date.now();
+      const roomId = group ? groupRoomId(group.group_id) : conversation!.chatRoomId;
+
+      const enqueued = send({
+        type: 'message',
+        message_id: messageId,
+        ...(group ? { group_id: group.group_id } : { receiver_id: conversation!.peerId }),
+        chat_room_id: roomId,
+        ciphertext,
+        nonce,
+        timestamp,
+      });
+      if (!enqueued) throw new Error('Not connected — reconnecting, try again shortly.');
+
+      recordMessage(roomId, {
+        id: messageId,
+        senderId: user.user_id,
+        text: caption,
+        timestamp,
+        status: 'sent',
+        file: fileMeta,
+      });
+    } catch (err) {
+      setSendError(err instanceof Error ? err.message : 'Could not send file.');
+    } finally {
+      setIsSending(false);
+    }
+  }
+
   // ── Per-message actions (surfaced by ChatView's context menu) ──────────────
   // These operate on the open room — DM or group alike (activeRoomId resolves
   // to whichever is active): ChatView only renders the active room, so every
@@ -1601,9 +1699,12 @@ export function DashboardShell({
 
       // Forwarded flag rides inside the encrypted envelope (not just the WS
       // frame) so it survives the backend's blind relay and reaches the peer.
+      // A forwarded file/image doesn't need re-uploading — the same S3 object
+      // key and AES key/IV just get re-wrapped under the new recipient's
+      // shared key, exactly like the text does.
       const { ciphertext, nonce } = await encryptText(
         sharedKey,
-        encodeMessageBody(message.text, { isForwarded: true }),
+        encodeMessageBody(message.text, { isForwarded: true, file: message.file }),
       );
       const messageId = crypto.randomUUID();
       const timestamp = Date.now();
@@ -1632,6 +1733,7 @@ export function DashboardShell({
         // Mark our own optimistic bubble as forwarded up front — without this
         // the tag never appears on the sender's side until a history refetch.
         isForwarded: true,
+        file: message.file,
       });
       gooeyToast(`Forwarded to ${peerName(target)}`);
     } catch (err) {
@@ -1653,10 +1755,15 @@ export function DashboardShell({
   const activeMessages = activeRoomId
     ? (messagesByRoom[activeRoomId] ?? getMessages(activeRoomId))
     : [];
-  // Roster names of the members composing in the open group, for the header
-  // and the typing bubble. Never includes ourselves (the hub excludes senders).
+  // IDs (and roster names derived from them, in the same order) of the members
+  // composing in the open group, for the header and the typing bubble — the
+  // bubble's avatar is resolved from the first id. Never includes ourselves (the
+  // hub excludes senders).
+  const activeGroupTypingIds = activeGroup
+    ? [...(groupTyping[activeGroup.group_id] ?? [])]
+    : [];
   const activeGroupTypingNames = activeGroup
-    ? [...(groupTyping[activeGroup.group_id] ?? [])].map((id) => memberName(activeGroup, id))
+    ? activeGroupTypingIds.map((id) => memberName(activeGroup, id))
     : [];
 
   // While a conversation is open, tell the peer we've read their messages so
@@ -1670,6 +1777,44 @@ export function DashboardShell({
     send({ type: 'read', receiver_id: activePeer, chat_room_id: activeRoom });
     // eslint-disable-next-line react-hooks/exhaustive-deps -- `send` is stable enough; re-sending on its identity change would be wasteful, not incorrect.
   }, [connectionStatus, activePeer, activeRoom, hasPeerMessages, activeMessages.length]);
+
+  // Advances the open room's local "last read" watermark (see lib/readState) to
+  // its newest message — on first opening it, and again whenever a further
+  // message lands while it stays open, so the sidebar's unread badge never
+  // grows for the room you're actively looking at. Purely local bookkeeping
+  // (no network), unlike the DM `read` frame above which tells the PEER their
+  // message was seen; this is what lets THIS device remember what it has and
+  // hasn't shown you once you navigate away.
+  useEffect(() => {
+    if (!activeRoomId || activeMessages.length === 0) return;
+    markRoomRead(activeRoomId, activeMessages[activeMessages.length - 1].timestamp);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- keyed on length, not the array/its contents; a same-length replacement (this app never edits messages) wouldn't need re-marking anyway.
+  }, [activeRoomId, activeMessages.length]);
+
+  // Unread counts for the sidebar, keyed by peer/group id rather than room id so
+  // Sidebar doesn't need to know how either kind derives its room id. Plain
+  // consts recomputed each render (not useMemo — the React Compiler already
+  // memoizes derived values like this throughout the component, and manual
+  // memoization here can't be preserved across activeRoomId's own derivation).
+  // The open room always reads 0 — it's on screen, not unread — rather than
+  // depending on the watermark effect above having already flushed this render.
+  const unreadByPeer: Record<string, number> = {};
+  const unreadByGroup: Record<string, number> = {};
+  if (user) {
+    for (const c of conversations) {
+      unreadByPeer[c.peerId] =
+        c.chatRoomId === activeRoomId
+          ? 0
+          : unreadCount(c.chatRoomId, messagesByRoom[c.chatRoomId] ?? getMessages(c.chatRoomId), user.user_id);
+    }
+    for (const g of groups) {
+      const roomId = groupRoomId(g.group_id);
+      unreadByGroup[g.group_id] =
+        roomId === activeRoomId
+          ? 0
+          : unreadCount(roomId, messagesByRoom[roomId] ?? getMessages(roomId), user.user_id);
+    }
+  }
 
   // Poll the hub for which conversation peers are online while connected. Sorted
   // + joined so the effect only restarts when the set of peers actually changes.
@@ -1716,6 +1861,8 @@ export function DashboardShell({
           activeGroupId={activeGroupId}
           pendingInviteCount={invites.length}
           onlinePeers={visibleOnlinePeers}
+          unreadByPeer={unreadByPeer}
+          unreadByGroup={unreadByGroup}
           onSelectConversation={openPeer}
           onSelectGroup={openGroup}
           onNewChat={() => {
@@ -1765,11 +1912,13 @@ export function DashboardShell({
           messages={activeMessages}
           myUserId={user?.user_id ?? ''}
           onSend={handleSend}
+          onSendFile={handleSendFile}
           isSending={isSending}
           sendError={sendError}
           keysReady={keyState.status === 'ready'}
           connectionStatus={connectionStatus}
           typingNames={activeGroupTypingNames}
+          typingUserIds={activeGroupTypingIds}
           onTyping={(isTyping) =>
             send({
               type: 'typing',
@@ -1794,6 +1943,7 @@ export function DashboardShell({
           messages={activeMessages}
           myUserId={user?.user_id ?? ''}
           onSend={handleSend}
+          onSendFile={handleSendFile}
           isSending={isSending}
           sendError={sendError}
           keysReady={keyState.status === 'ready'}

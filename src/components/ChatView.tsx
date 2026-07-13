@@ -18,6 +18,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { AnimatePresence, motion, useMotionValue, useTransform } from 'framer-motion';
 import { Avatar } from '@astryxdesign/core/Avatar';
+import { Popover } from '@astryxdesign/core/Popover';
 import { StatusDot } from '@astryxdesign/core/StatusDot';
 import {
   ArrowUturnLeftIcon,
@@ -41,7 +42,9 @@ import { resolveAvatarUrl } from '@/lib/api';
 import { peerName, type Conversation, type PeerStatus } from '@/lib/conversations';
 import { canManageGroup, memberName, type Group } from '@/lib/groups';
 import type { ChatMessage, MessageStatus, ReplyPreview } from '@/lib/messageStore';
+import { EmojiPicker } from './EmojiPicker';
 import { GroupContextMenu } from './GroupContextMenu';
+import { MessageAttachment } from './MessageAttachment';
 import { MessageContextMenu } from './MessageContextMenu';
 import { TypingIndicator } from './TypingIndicator';
 
@@ -74,6 +77,11 @@ const TYPING_IDLE_MS = 3000;
 // this a long paste (a code snippet, say) scrolls inside the box instead of
 // pushing the whole composer off-screen.
 const MAX_COMPOSER_HEIGHT_PX = 160;
+// Client-side guard only — the presigned S3 PUT itself has no size limit the
+// backend can enforce (it never sees the bytes). Large enough for photos and
+// small documents without risking hanging the browser on the encrypt step,
+// which reads the whole file into memory at once.
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 
 function formatTime(timestamp: number): string {
   return new Date(timestamp).toLocaleTimeString([], {
@@ -342,6 +350,15 @@ function MessageRow({
   const dragX = useMotionValue(0);
   const replyHintOpacity = useTransform(dragX, [0, 60], [0, 1]);
 
+  // Right-clicking a bubble opens the same menu as the hover chevron, instead
+  // of the browser's native context menu — same options either way. Disabled
+  // in select mode, mirroring the chevron trigger being hidden there too.
+  const openMenuOnRightClick = (e: React.MouseEvent) => {
+    if (selectMode) return;
+    e.preventDefault();
+    onMenuOpenChange(true);
+  };
+
   return (
     <div
       {...rowSelectProps}
@@ -384,13 +401,18 @@ function MessageRow({
         // the bubble, completely outside it, with its center level with the
         // timestamp + double-tick line.
         <div className="vibe-msg-in flex flex-1 origin-bottom-right items-end justify-end gap-1.5">
-          <div className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
+          <div
+            onContextMenu={openMenuOnRightClick}
+            className="relative max-w-[75%] rounded-2xl rounded-br-md bg-[var(--vibe-blue)] py-2.5 pl-4 pr-9 text-white shadow-sm [text-shadow:0_1px_1px_rgba(2,20,40,0.28)]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="sender" />}
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="sender" />}
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
-              {message.text}
-            </p>
+            {message.file && <MessageAttachment file={message.file} tone="sender" />}
+            {!message.file && (
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed">
+                {message.text}
+              </p>
+            )}
             <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-white/85">
               {message.kept && (
                 <BookmarkSolidIcon className="h-3 w-3 text-white/85" aria-label="Kept" />
@@ -439,7 +461,9 @@ function MessageRow({
         // Receiver bubble — left aligned, avatar + name, light gray.
         <div className="vibe-msg-in flex flex-1 origin-bottom-left items-end gap-2">
           <Avatar src={resolveAvatarUrl(senderAvatarUrl)} name={senderName} size="small" />
-          <div className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
+          <div
+            onContextMenu={openMenuOnRightClick}
+            className="relative max-w-[75%] rounded-2xl rounded-tl-md bg-white dark:bg-gray-900 py-2.5 pl-4 pr-9 shadow-sm ring-1 ring-black/[0.03]">
             {!selectMode && trigger}
             {message.isForwarded && <ForwardedTag tone="receiver" />}
             <span
@@ -448,9 +472,12 @@ function MessageRow({
               {senderName}
             </span>
             {message.replyTo && <ReplyQuote replyTo={message.replyTo} tone="receiver" />}
-            <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">
-              {message.text}
-            </p>
+            {message.file && <MessageAttachment file={message.file} tone="receiver" />}
+            {!message.file && (
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-gray-700 dark:text-gray-200">
+                {message.text}
+              </p>
+            )}
             <span className="mt-1 flex items-center justify-end gap-1 text-[11px] text-gray-400 dark:text-gray-500">
               {message.kept && (
                 <BookmarkSolidIcon className="h-3 w-3 text-gray-400 dark:text-gray-500" aria-label="Kept" />
@@ -475,6 +502,7 @@ export function ChatView({
   messages,
   myUserId,
   onSend,
+  onSendFile,
   isSending,
   sendError,
   keysReady = true,
@@ -484,6 +512,7 @@ export function ChatView({
   peerStatus,
   isPeerTyping = false,
   typingNames = [],
+  typingUserIds = [],
   onTyping,
   onInviteMember,
   onOpenDetails,
@@ -503,6 +532,9 @@ export function ChatView({
   messages: ChatMessage[];
   myUserId: string;
   onSend: (text: string, replyTo?: ReplyPreview) => void;
+  /** Encrypts, uploads, and sends a file/image attachment (see DashboardShell's
+   *  handleSendFile). Omitted entirely disables the attach-file button. */
+  onSendFile?: (file: File) => void;
   isSending: boolean;
   sendError: string | null;
   /** False while this device's E2EE keypair is still being generated/published
@@ -524,6 +556,9 @@ export function ChatView({
   isPeerTyping?: boolean;
   /** Display names of group members currently composing ("X is typing…"). */
   typingNames?: string[];
+  /** User IDs backing `typingNames`, same order — used to resolve the typing
+   *  bubble's avatar to the actual composing member instead of a blank initial. */
+  typingUserIds?: string[];
   /** Notify the room that we started/stopped composing (throttled here). */
   onTyping: (isTyping: boolean) => void;
   /** Opens the invite dialog — the group header menu's "Add member", shown
@@ -548,8 +583,58 @@ export function ChatView({
   const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isGroupMenuOpen, setIsGroupMenuOpen] = useState(false);
+  const [isEmojiPickerOpen, setIsEmojiPickerOpen] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Grows/shrinks the textarea to fit its content, capped at
+  // MAX_COMPOSER_HEIGHT_PX — shared by typing (onChange) and picking an emoji.
+  function autosizeComposer(el: HTMLTextAreaElement) {
+    el.style.height = 'auto';
+    el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT_PX)}px`;
+  }
+
+  // Inserts an emoji at the caret (replacing any selection), same as typing it —
+  // not just appended at the end, so picking one mid-edit lands where expected.
+  // Falls back to appending when the textarea ref isn't available yet.
+  function insertEmoji(emoji: string) {
+    const el = inputRef.current;
+    if (!el) {
+      setDraft((d) => d + emoji);
+      return;
+    }
+    const start = el.selectionStart ?? draft.length;
+    const end = el.selectionEnd ?? draft.length;
+    const next = draft.slice(0, start) + emoji + draft.slice(end);
+    setDraft(next);
+    if (next.trim()) notifyTyping();
+    // Runs after React flushes the new value to the DOM, so the caret restore
+    // and resize act on the textarea's actual post-insert content/height.
+    requestAnimationFrame(() => {
+      el.focus();
+      const caret = start + emoji.length;
+      el.setSelectionRange(caret, caret);
+      autosizeComposer(el);
+    });
+  }
+
+  // Reads the file picked from the hidden input, hands it to the parent
+  // (which encrypts, uploads, and sends it — see DashboardShell's
+  // handleSendFile), and resets the input so re-picking the same file still
+  // fires onChange next time.
+  function handleFileSelected(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (file.size > MAX_ATTACHMENT_BYTES) {
+      gooeyToast.warning(
+        `That file is over ${Math.round(MAX_ATTACHMENT_BYTES / (1024 * 1024))} MB — please pick a smaller one.`,
+      );
+      return;
+    }
+    onSendFile?.(file);
+  }
 
   // ── DM/group resolution ─────────────────────────────────────────────────
   // Everything below renders from these instead of touching conversation/group
@@ -1000,7 +1085,11 @@ export function ChatView({
                 transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                 className="flex origin-bottom-left items-end gap-2">
                 <Avatar
-                  src={isGroup ? undefined : resolveAvatarUrl(conversation?.peerAvatarUrl)}
+                  src={
+                    isGroup
+                      ? resolveAvatarUrl(senderAvatarOf(typingUserIds[0] ?? ''))
+                      : resolveAvatarUrl(conversation?.peerAvatarUrl)
+                  }
                   name={isGroup ? typingNames[0] : conversation ? peerName(conversation) : ''}
                   size="small"
                 />
@@ -1058,13 +1147,29 @@ export function ChatView({
                 event.preventDefault();
                 handleSend();
               }}>
-              <button
-                type="button"
-                aria-label="Add emoji"
-                disabled={isPeerDeleted}
-                className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
-                <FaceSmileIcon className="h-6 w-6" />
-              </button>
+              <Popover
+                isOpen={isEmojiPickerOpen}
+                onOpenChange={setIsEmojiPickerOpen}
+                isEnabled={!isPeerDeleted}
+                label="Emoji picker"
+                placement="above"
+                alignment="start"
+                content={
+                  <EmojiPicker
+                    onSelect={(emoji) => {
+                      insertEmoji(emoji);
+                      setIsEmojiPickerOpen(false);
+                    }}
+                  />
+                }>
+                <button
+                  type="button"
+                  aria-label="Add emoji"
+                  disabled={isPeerDeleted}
+                  className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
+                  <FaceSmileIcon className="h-6 w-6" />
+                </button>
+              </Popover>
 
               {/* A <textarea>, not an <input> — a single-line input silently
                   strips newlines, which is exactly why pasting anything
@@ -1093,9 +1198,7 @@ export function ChatView({
 
                   // Auto-grow to fit the content, capped so a huge paste
                   // scrolls inside the box instead of swallowing the screen.
-                  const el = event.target;
-                  el.style.height = 'auto';
-                  el.style.height = `${Math.min(el.scrollHeight, MAX_COMPOSER_HEIGHT_PX)}px`;
+                  autosizeComposer(event.target);
                 }}
                 onKeyDown={(event) => {
                   if (event.key === 'Enter' && !event.shiftKey) {
@@ -1108,10 +1211,17 @@ export function ChatView({
                 style={{ maxHeight: MAX_COMPOSER_HEIGHT_PX }}
               />
 
+              <input
+                ref={fileInputRef}
+                type="file"
+                className="sr-only"
+                onChange={handleFileSelected}
+              />
               <button
                 type="button"
                 aria-label="Attach file"
-                disabled={isPeerDeleted}
+                disabled={isPeerDeleted || !onSendFile}
+                onClick={() => fileInputRef.current?.click()}
                 className="flex shrink-0 items-center justify-center rounded-full p-1.5 text-gray-400 dark:text-gray-500 transition-colors hover:text-gray-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400">
                 <PaperClipIcon className="h-6 w-6" />
               </button>

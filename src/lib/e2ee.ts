@@ -14,7 +14,10 @@
 const PRIVATE_KEY_STORAGE = 'vibenet:e2ee:privateKey';
 const ECDH_PARAMS = { name: 'ECDH', namedCurve: 'P-256' } as const;
 
-function bufferToBase64(buffer: ArrayBuffer): string {
+// Exported for reuse by lib/fileCrypto.ts, which needs the exact same
+// ArrayBuffer<->base64 conversion for file encryption keys/IVs — no reason to
+// duplicate these two pure helpers.
+export function bufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = '';
   for (let i = 0; i < bytes.length; i += 1) {
@@ -23,7 +26,7 @@ function bufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-function base64ToBuffer(b64: string): ArrayBuffer {
+export function base64ToBuffer(b64: string): ArrayBuffer {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
