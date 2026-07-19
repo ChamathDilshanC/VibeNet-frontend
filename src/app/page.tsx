@@ -24,6 +24,14 @@ import { useRouter } from 'next/navigation';
 import localFont from 'next/font/local';
 import { Poppins } from 'next/font/google';
 import { motion, useReducedMotion, type Variants } from 'framer-motion';
+import {
+  ShieldCheckIcon,
+  BoltIcon,
+  UserGroupIcon,
+  PaperClipIcon,
+  KeyIcon,
+  SignalIcon,
+} from '@heroicons/react/24/outline';
 import { Text } from '@astryxdesign/core/Text';
 import { Button } from '@astryxdesign/core/Button';
 import { Divider } from '@astryxdesign/core/Divider';
@@ -64,6 +72,66 @@ const fadeUp: Variants = {
   hidden: { opacity: 0, y: 16 },
   show: { opacity: 1, y: 0, transition: { duration: 0.55, ease: [0.22, 1, 0.36, 1] } },
 };
+
+// ─── Features ───────────────────────────────────────────────────────────────
+// Mirrors the capability table in README.md ("What's Live in Production") —
+// keep this in sync if that table changes.
+
+const FEATURES = [
+  {
+    icon: ShieldCheckIcon,
+    title: 'End-to-end encryption',
+    description:
+      'Every account gets its own ECDH keypair. Group messages are wrapped in AES-256-GCM individually, per member.',
+  },
+  {
+    icon: BoltIcon,
+    title: 'Real-time delivery',
+    description:
+      'Messages land over WebSocket the instant you send, with typing indicators and delivery/read receipts to match.',
+  },
+  {
+    icon: UserGroupIcon,
+    title: 'Group chats, done right',
+    description:
+      'Owner and admin roles, invites, and ownership handoff — built for teams, not just pairs.',
+  },
+  {
+    icon: PaperClipIcon,
+    title: 'Rich, encrypted content',
+    description:
+      'Attachments, polls, calendar events, and shared contacts — all encrypted client-side before upload.',
+  },
+  {
+    icon: KeyIcon,
+    title: 'Secure sign-in',
+    description:
+      'Email/password or Google OAuth, plus a rotating PIN that keeps a stranger’s first message in check.',
+  },
+  {
+    icon: SignalIcon,
+    title: 'Always-on presence',
+    description:
+      'Online status, last-seen, and automatic reconnect, so you always know who’s around.',
+  },
+] as const;
+
+function FeatureCard({ feature }: { feature: (typeof FEATURES)[number] }) {
+  const Icon = feature.icon;
+  return (
+    <motion.div variants={fadeUp} className="vibe-feature-card">
+      <div className="vibe-feature-icon">
+        <Icon className="h-5 w-5" />
+      </div>
+      <Text type="large" weight="bold" as="div">
+        {feature.title}
+      </Text>
+      <Text type="body" color="secondary">
+        {feature.description}
+      </Text>
+    </motion.div>
+  );
+}
 
 // ─── Stat Block ─────────────────────────────────────────────────────────────
 
@@ -229,6 +297,41 @@ export default function Home() {
             </motion.div>
           </div>
         </main>
+
+        {/* Features — what the app actually does, for visitors who scroll past the hero. */}
+        <section id="features" className="relative z-10 mx-auto w-full max-w-6xl px-6 py-20 lg:px-8">
+          <motion.div
+            className="mx-auto max-w-2xl text-center"
+            initial={{ opacity: 0, y: 16 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, amount: 0.4 }}
+            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
+          >
+            <Text type="supporting" weight="semibold" display="block" className="vibe-eyebrow">
+              WHAT&rsquo;S INSIDE
+            </Text>
+            <Text
+              type="display-2"
+              as="h2"
+              display="block"
+              className="vibe-landing-headline mt-3 text-3xl leading-[1.15] sm:text-4xl"
+            >
+              Everything a private chat needs.
+            </Text>
+          </motion.div>
+
+          <motion.div
+            className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+            variants={stagger}
+            initial="hidden"
+            whileInView="show"
+            viewport={{ once: true, amount: 0.15 }}
+          >
+            {FEATURES.map((feature) => (
+              <FeatureCard key={feature.title} feature={feature} />
+            ))}
+          </motion.div>
+        </section>
       </MediaTheme>
     </div>
   );

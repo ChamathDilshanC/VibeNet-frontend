@@ -8,7 +8,7 @@
 'use client';
 
 import { AnimatePresence, motion, useReducedMotion } from 'framer-motion';
-import { useEffect, useRef, useState, useCallback, type CSSProperties } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 
 interface CarouselItem {
   image: string;
@@ -44,17 +44,20 @@ interface ContactCarouselProps {
 
 const mkItem = ([image, label]: [string, string]): CarouselItem => ({ image, label });
 
+// Hotlinked directly from Pinterest's CDN (not mirrored into /public) — keeps
+// the repo free of binary assets we don't own, at the cost of depending on a
+// third party's uptime.
 const DEFAULT_ITEMS: CarouselItem[] = (
   [
-    ['/gallery/g1.jpg', 'Aisha Khan'],
-    ['/gallery/g2.jpg', 'Daniel Reyes'],
-    ['/gallery/g3.jpg', 'Priya Sharma'],
-    ['/gallery/g4.jpg', 'Mateo Lopez'],
-    ['/gallery/g5.jpg', 'Yuki Tanaka'],
-    ['/gallery/g6.jpg', 'Sofia Moreau'],
-    ['/gallery/g7.jpg', 'Kwame Asante'],
-    ['/gallery/g8.jpg', 'Elena Volkov'],
-    ['/gallery/g9.jpg', 'Noah Bergström'],
+    ['https://i.pinimg.com/1200x/e8/1e/46/e81e46fc7b4931b6c7731f9126de1a21.jpg', 'Aisha Khan'],
+    ['https://i.pinimg.com/736x/05/89/e8/0589e8574bf65574944616b01696467a.jpg', 'Priya Sharma'],
+    ['https://i.pinimg.com/736x/10/82/68/1082687d909be23eb2a87c28273a992b.jpg', 'Daniel Reyes'],
+    ['https://i.pinimg.com/736x/11/4b/f7/114bf77447d30b02824cbdb10143e1bc.jpg', 'Mateo Lopez'],
+    ['https://i.pinimg.com/736x/9a/57/64/9a57648dc0389e374cd458fcf795fe5a.jpg', 'Sofia Moreau'],
+    ['https://i.pinimg.com/736x/8c/d7/7f/8cd77fe28f6373b39b44f461d2d35947.jpg', 'Yuki Tanaka'],
+    ['https://i.pinimg.com/736x/0a/1a/62/0a1a62b2590f92b1d6d1e790b5d7b86c.jpg', 'Elena Volkov'],
+    ['https://i.pinimg.com/736x/e0/41/2f/e0412fe96acd6a2306f2e0d9b4aa97ea.jpg', 'Kaito Kuroki'],
+    ['https://i.pinimg.com/736x/c5/f5/fd/c5f5fd865ec5adfbbb619530ec61d538.jpg', 'Gita Patel'],
   ] as [string, string][]
 ).map(mkItem);
 
@@ -284,7 +287,17 @@ export function ContactCarousel(props: ContactCarouselProps) {
               src={list[active]?.image}
               alt={list[active]?.label ?? ''}
               draggable={false}
-              style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+              loading="eager"
+              referrerPolicy="no-referrer"
+              style={{
+                width: '100%',
+                height: '100%',
+                objectFit: 'cover',
+                // Portrait/full-body source photos need the crop biased toward
+                // the top so faces survive the square crop, not just torsos.
+                objectPosition: '50% 15%',
+                display: 'block',
+              }}
             />
           </motion.div>
         </AnimatePresence>
@@ -372,7 +385,15 @@ export function ContactCarousel(props: ContactCarouselProps) {
                     src={item.image}
                     alt=""
                     draggable={false}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                    loading="lazy"
+                    referrerPolicy="no-referrer"
+                    style={{
+                      width: '100%',
+                      height: '100%',
+                      objectFit: 'cover',
+                      objectPosition: '50% 15%',
+                      display: 'block',
+                    }}
                   />
                 )}
               </button>
