@@ -75,7 +75,7 @@ function LandingFooter({ year }: { year: number }) {
               alt="VibeNet"
               width={1787}
               height={521}
-              className="h-6 w-auto"
+              className="h-auto w-24 sm:w-28 md:w-32"
             />
             <Text type="supporting" color="secondary" className="max-w-xs">
               Secure, real-time end-to-end encrypted chat — built for conversations
