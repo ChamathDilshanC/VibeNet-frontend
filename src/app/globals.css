@@ -213,9 +213,11 @@ body {
   line-height: 0;
 }
 
-/* Coloured eyebrow above the VibeNet wordmark. */
+/* Coloured eyebrow above the VibeNet wordmark. Brightened to a lighter sky
+   blue — the hero now sits on the dark "Orchid Depths" gradient (see
+   .vibe-landing below), where the original darker shade lost contrast. */
 .vibe-eyebrow {
-  color: #0284c7; /* darker shade of brand blue for readable small text */
+  color: #7dd3fc;
   letter-spacing: 0.16em;
 }
 
@@ -227,11 +229,72 @@ body {
   color: transparent;
 }
 
-/* Subtle brand ring on the image tiles. */
-.vibe-tile {
-  box-shadow: 0 1px 2px rgba(6, 40, 61, 0.06);
-  outline: 1px solid rgba(56, 181, 255, 0.08);
-  outline-offset: -1px;
+/*
+ * ─── Landing hero ─────────────────────────────────────────────────────────
+ *
+ * Fonts, background, and small decorative rules for the "/" route only.
+ * Scoped entirely by the `.vibe-landing` classname applied in app/page.tsx —
+ * no other route uses these selectors.
+ *
+ * Fonts: page.tsx loads Brace (local) and Poppins (Google) via next/font and
+ * exposes them as --font-brace / --font-poppins on the page wrapper. Astryx's
+ * own --font-family-heading / --font-family-body custom properties are
+ * re-declared here so every heading-typed element (h1-h6, Text
+ * type="display-*") automatically renders in Brace, and everything else
+ * (body copy, labels, button text) renders in Poppins — with no need to
+ * annotate individual elements.
+ */
+.vibe-landing {
+  /* Can't reference --font-family-heading/-body here to "extend" them — a
+     custom property that refers to itself is cyclic and CSS invalidates the
+     whole declaration. Spelling out the theme's own fallback stack instead. */
+  --font-family-heading: var(--font-brace), Figtree, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-family-body: var(--font-poppins), Figtree, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.vibe-landing-headline {
+  letter-spacing: -0.01em;
+}
+
+/* Eyebrow pill badge wrapping the "END-TO-END ENCRYPTED" label. */
+.vibe-eyebrow-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  width: fit-content;
+  padding: 6px 14px;
+  border-radius: var(--radius-full);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.06);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+@keyframes vibe-eyebrow-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 0 0 0 rgba(126, 211, 33, 0.5);
+  }
+  50% {
+    opacity: 0.7;
+    box-shadow: 0 0 0 4px rgba(126, 211, 33, 0);
+  }
+}
+.vibe-eyebrow-dot {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--vibe-green);
+  animation: vibe-eyebrow-pulse 2.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vibe-eyebrow-dot {
+    animation: none;
+  }
 }
 
 /* Register (primary CTA): solid green -> blue gradient fill, white label. */
