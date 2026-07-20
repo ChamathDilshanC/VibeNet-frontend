@@ -21,6 +21,7 @@ import { verifyPeerPin } from '@/lib/user';
 import {
   applyPeerUpdate,
   chatRoomIdFor,
+  discoverConversations,
   listConversations,
   peerName,
   upsertConversation,
@@ -627,6 +628,50 @@ export function DashboardShell({
     [getSharedKey, refreshPeerSharedKey],
   );
 
+  // Catches this device up on DM rooms someone else opened while it was
+  // offline — the WS hub only delivers live (see syncHistory above and
+  // handleIncoming's own first-message path below), so a room started while
+  // we weren't connected would otherwise never surface here at all. Runs
+  // once per sign-in and again on every reconnect (see the effect below),
+  // same as refreshGroups/refreshInvites. Only materializes peers we don't
+  // already have a local conversation for, then eagerly pulls in their
+  // history so the sidebar shows an accurate preview/unread badge right away
+  // instead of only once someone happens to open the chat.
+  const discoverConversationsFromServer = useCallback(async () => {
+    if (!user) return;
+    try {
+      const discovered = await discoverConversations();
+      if (discovered.length === 0) return;
+
+      const known = new Set(listConversations(user.user_id).map((c) => c.peerId));
+      const newConversations: Conversation[] = discovered
+        .filter((d) => d.public_key && !known.has(d.peer_id))
+        .map((d) => ({
+          peerId: d.peer_id,
+          peerUsername: d.username,
+          peerDisplayName: d.display_name,
+          peerPublicKey: d.public_key!,
+          peerAvatarUrl: d.avatar_url,
+          peerStatus: d.status,
+          chatRoomId: d.chat_room_id,
+          createdAt: Date.now(),
+        }));
+      if (newConversations.length === 0) return;
+
+      let next = listConversations(user.user_id);
+      for (const conversation of newConversations) {
+        next = upsertConversation(user.user_id, conversation);
+      }
+      setConversations(next);
+
+      for (const conversation of newConversations) {
+        await syncHistory(conversation, user.user_id);
+      }
+    } catch {
+      // Best-effort — same as refreshGroups/refreshInvites; retried next reconnect.
+    }
+  }, [user, syncHistory]);
+
   // Goes through mergeMessages (dedupe by id) rather than a blind append —
   // the same message can otherwise land twice: once live over the
   // WebSocket, once again from a history sync a moment later.
@@ -1019,16 +1064,18 @@ export function DashboardShell({
 
   const { status: connectionStatus, send } = useChatSocket(handleIncoming);
 
-  // Load groups + invites on sign-in and again on every reconnect — a
-  // group_update/invite_received frame pushed while this device was offline
-  // is gone for good, so the reconnect refetch is what heals the gap.
+  // Load groups + invites + any newly-discoverable DMs on sign-in and again
+  // on every reconnect — a group_update/invite_received frame (or a DM's
+  // opening message) pushed while this device was offline is gone for good
+  // otherwise, so the reconnect refetch is what heals the gap.
   useEffect(() => {
     if (!user || connectionStatus !== 'open') return;
     void (async () => {
       await refreshGroups();
       await refreshInvites();
+      await discoverConversationsFromServer();
     })();
-  }, [user, connectionStatus, refreshGroups, refreshInvites]);
+  }, [user, connectionStatus, refreshGroups, refreshInvites, discoverConversationsFromServer]);
 
   // openPeer opens an existing conversation immediately — sidebar DM rows and
   // the empty-state "Recent chats" list use this path and never trigger the PIN gate.

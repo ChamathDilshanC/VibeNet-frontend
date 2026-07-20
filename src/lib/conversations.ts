@@ -1,10 +1,18 @@
 // Client-side conversation registry.
 //
-// The backend has no "contacts" or "conversations" endpoint — a DM is just two
-// user IDs. Starting a chat (see NewChatDialog) fetches the peer's public key
-// once and caches everything needed to resume the conversation — including
-// after a reload — as a small localStorage table, namespaced per signed-in
-// account since a device may hold sessions for more than one user over time.
+// A DM is just two user IDs — there's no backend "conversation" resource, only
+// a room id both sides derive the same way (see chatRoomIdFor). Starting a chat
+// (see NewChatDialog) fetches the peer's public key once and caches everything
+// needed to resume the conversation — including after a reload — as a small
+// localStorage table, namespaced per signed-in account since a device may hold
+// sessions for more than one user over time.
+//
+// The backend does index which rooms each user is a participant in (see
+// discoverConversations below), but only as a catch-up mechanism for a
+// first-contact room opened while this device was offline — it's not a general
+// "conversations" API and carries no message content.
+
+import { apiClient } from '@/lib/apiClient';
 
 const STORAGE_PREFIX = 'vibenet:conversations:';
 
@@ -94,4 +102,31 @@ export function applyPeerUpdate(
   );
   window.localStorage.setItem(storageKey(ownerId), JSON.stringify(next));
   return next;
+}
+
+/** One row from GET /api/conversations/discover — a DM room this account is a
+ *  participant in per the server-side index, whether or not this device's
+ *  local cache already knows about it (see discoverConversations). */
+export interface DiscoverableConversation {
+  chat_room_id: string;
+  peer_id: string;
+  username: string;
+  display_name: string;
+  avatar_url?: string;
+  public_key?: string;
+  status?: PeerStatus;
+}
+
+// discoverConversations lists every DM room the signed-in account is a
+// participant in server-side — the catch-up path for a first-contact
+// conversation someone else opened while this device was offline. The
+// WebSocket hub only delivers live (see the backend's Hub.DeliverToUser), so
+// without this a room started while we weren't connected would never
+// otherwise surface: there's no push notification and no "conversations"
+// list to poll, only this participant index.
+export async function discoverConversations(): Promise<DiscoverableConversation[]> {
+  const { conversations } = await apiClient.get<{ conversations: DiscoverableConversation[] }>(
+    '/api/conversations/discover',
+  );
+  return conversations;
 }
