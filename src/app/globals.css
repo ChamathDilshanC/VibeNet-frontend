@@ -521,6 +521,30 @@ body {
   overflow: hidden;
 }
 
+/*
+ * Pill-shaped action buttons, scoped to Settings only — same wrapper-class technique
+ * as .vibe-cta above, but overriding the radius custom property Button reads
+ * (--_button-radius) instead of paint. Kept separate from .vibe-cta itself so the
+ * landing/auth CTAs that class already styles keep their default corner radius.
+ */
+.vibe-pill .astryx-button {
+  --_button-radius: 9999px;
+}
+
+/*
+ * Chat PIN switch: blue "on" state to match the reference design, instead of the
+ * neutral theme's near-black accent. Targets the rendered data-attribute the same
+ * way .vibe-cta targets Button's data-variant, so it survives the theme's own
+ * hover tint-mix rule (higher specificity: two classes + attribute selector).
+ */
+.vibe-settings-switch .astryx-switch[data-checked="checked"] {
+  background-color: var(--vibe-blue);
+}
+.vibe-settings-switch .astryx-switch[data-checked="checked"]:hover {
+  background-color: var(--vibe-blue);
+  filter: brightness(1.05);
+}
+
 /* Global footer. */
 .vibe-footer {
   margin-top: auto; /* pin to the bottom when page content is short */

@@ -14,9 +14,10 @@
 // The section is controlled by the parent so the sidebar's "Chat PIN" shortcut can
 // open straight onto Privacy & Security.
 //
-// Section panels are frosted-glass cards floating on the app's ambient brand glow.
-// Every surface reads its colors from the tokens in globals.css, so the whole panel
-// repaints when the Appearance tab switches scheme (see .vibe-settings there).
+// The nav rail and the section pane are both floating white cards (rounded corners,
+// soft shadow, thin border) on a light gray page backdrop — see FLOATING_CARD below
+// and .vibe-settings in globals.css, which repaints both when the Appearance tab
+// switches scheme.
 
 'use client';
 
@@ -31,9 +32,9 @@ import { useMediaQuery } from '@astryxdesign/core/hooks';
 import { VStack } from '@astryxdesign/core/Layout';
 import { SegmentedControl, SegmentedControlItem } from '@astryxdesign/core/SegmentedControl';
 import { Switch } from '@astryxdesign/core/Switch';
-import { Text } from '@astryxdesign/core/Text';
 import { ShieldCheckIcon } from '@heroicons/react/24/outline';
 import {
+  AlertTriangle,
   ArrowLeft,
   AtSign,
   Camera,
@@ -41,6 +42,7 @@ import {
   ChevronRight,
   Cloud,
   Copy,
+  KeyRound,
   LogOut,
   Mail,
   Moon,
@@ -109,34 +111,49 @@ function displayNameError(displayName: string): string | null {
   return null;
 }
 
-// SettingsCard is the frosted-glass surface every section is built from: translucent
-// fill, hairline border, and a blur that lets the ambient brand glow through. Crisp
-// white in light mode (not the old off-white wash), deep slate in dark.
-const GLASS =
-  'rounded-2xl border backdrop-blur-xl transition-colors duration-300 ease-in-out ' +
-  'border-gray-200 bg-white/80 shadow-xl shadow-gray-900/5 ' +
-  'dark:border-gray-800 dark:bg-gray-900/60 dark:shadow-black/30';
+// Both the nav rail and the content pane are floating white cards on a soft gray
+// page backdrop (see the outer wrapper in SettingsPanel below) rather than an
+// edge-to-edge split — a thin border plus a soft shadow instead of a hard seam.
+const FLOATING_CARD =
+  'rounded-2xl border shadow-sm transition-colors duration-300 ease-in-out ' +
+  'border-gray-200/70 bg-white ' +
+  'dark:border-gray-800 dark:bg-gray-900';
 
-// The settings nav rail. A solid, distinct surface one step deeper than the content
-// beside it — that contrast is what gives the split its depth.
-//
-// It follows the theme rather than staying dark in both: a permanently gray-950 rail
-// would reintroduce exactly the light/dark seam we just removed from the app, and would
-// fight the crisp light palette. gray-50 against the white content area reads as the
-// same Discord-style depth step, just in the right key.
-const RAIL =
-  'border-r transition-colors duration-300 ease-in-out ' +
-  'border-gray-200 bg-gray-50 ' +
-  'dark:border-gray-800 dark:bg-gray-950';
-
-function SettingsCard({
-  children,
-  className = '',
+// SectionHeading — the icon-badge + title + description row used at the top of
+// every settings section (Account details, PIN mode, Danger Zone, Theme), so the
+// four sections read as one consistent design language rather than each rolling
+// its own heading treatment.
+function SectionHeading({
+  icon: Icon,
+  tone = 'neutral',
+  title,
+  description,
 }: {
-  children: React.ReactNode;
-  className?: string;
+  icon: LucideIcon;
+  tone?: 'neutral' | 'danger';
+  title: string;
+  description?: string;
 }) {
-  return <div className={`${GLASS} p-6 sm:p-8 ${className}`}>{children}</div>;
+  return (
+    <div className="flex items-start gap-3">
+      <span
+        className={[
+          'flex h-9 w-9 shrink-0 items-center justify-center rounded-lg',
+          tone === 'danger'
+            ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+            : 'bg-gray-100 text-gray-600 dark:bg-white/5 dark:text-gray-300',
+        ].join(' ')}
+      >
+        <Icon className="h-[18px] w-[18px]" strokeWidth={1.75} />
+      </span>
+      <div className="min-w-0">
+        <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
+        {description && (
+          <p className="mt-0.5 text-sm text-gray-500 dark:text-gray-400">{description}</p>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // AvatarUploader renders the large circular avatar with a hover/focus overlay that
@@ -167,10 +184,8 @@ function AvatarUploader({
       }
       aria-label="Change profile picture"
     >
-      {/* Thick border in the CONTENT surface's colour (see <main>), so the avatar reads
-          as punched out of the banner it overlaps rather than pasted on top of it. */}
-      <span className="relative block rounded-full border-4 border-white bg-white transition-colors duration-300 dark:border-gray-900 dark:bg-gray-900">
-        <Avatar src={src} name={name} size={128} alt={name} />
+      <span className="relative block rounded-full ring-4 ring-gray-50 transition-colors duration-300 dark:ring-white/5">
+        <Avatar src={src} name={name} size={96} alt={name} />
         {/* Dark overlay + camera icon, revealed on hover or keyboard focus. */}
         <span
           className="absolute inset-0 flex flex-col items-center justify-center gap-1 rounded-full bg-black/55 text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100 group-focus-within:opacity-100"
@@ -256,15 +271,16 @@ function Field({
           aria-describedby={describedBy}
           onChange={(e) => onChange?.(e.target.value)}
           className={[
-            'w-full rounded-xl border py-3.5 pl-11 pr-4 text-sm outline-none',
+            'w-full rounded-xl border py-3 pl-11 pr-4 text-sm outline-none',
             'transition-colors duration-200 ease-in-out',
-            'bg-white text-gray-900 placeholder:text-gray-400',
-            'dark:bg-gray-900/60 dark:text-white dark:placeholder:text-gray-500',
-            'focus:border-blue-500 focus:ring-2 focus:ring-blue-500/50',
-            readOnly ? 'cursor-not-allowed text-gray-500 dark:text-gray-400' : '',
+            'placeholder:text-gray-400 dark:placeholder:text-gray-500',
+            'focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/50 dark:focus:bg-gray-900',
+            readOnly
+              ? 'cursor-not-allowed bg-gray-50/80 text-gray-500 dark:bg-white/[0.03] dark:text-gray-400'
+              : 'bg-gray-50/60 text-gray-900 dark:bg-white/[0.03] dark:text-white',
             error
-              ? 'border-red-400 dark:border-red-500'
-              : 'border-gray-200 dark:border-gray-800',
+              ? 'border-red-300 dark:border-red-500/60'
+              : 'border-gray-200/70 dark:border-white/10',
           ].join(' ')}
         />
       </div>
@@ -372,98 +388,91 @@ function ProfilePanel({
   }
 
   return (
-    <form onSubmit={handleSubmit} noValidate>
-      {/* Full-bleed banner. Purely decorative, so it's hidden from the a11y tree. */}
-      <div
-        aria-hidden
-        className="h-64 w-full bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600"
-      />
-
-      <div className="px-6 pb-12 sm:px-8">
-        {/* Avatar rides up over the banner's bottom edge; Save sits opposite it. The row
-            stacks on narrow screens so the button never crowds the name. */}
-        <div className="-mt-16 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
-            <AvatarUploader
-              src={previewUrl ?? resolveAvatarUrl(user.avatar_url)}
-              name={currentDisplayName}
-              onSelect={handleSelectAvatar}
-              disabled={saving}
-            />
-            <div className="pb-1">
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white">
-                {currentDisplayName}
-              </h2>
-              <p className="text-sm text-gray-500 dark:text-gray-400">@{user.username}</p>
-            </div>
-          </div>
-
-          <div className="vibe-cta pb-1">
-            <Button
-              label={saving ? 'Saving…' : 'Save Changes'}
-              type="submit"
-              variant="primary"
-              size="lg"
-              isLoading={saving}
-              isDisabled={!canSave}
-            />
+    <form onSubmit={handleSubmit} noValidate className="w-full px-6 py-8 sm:px-8">
+      {/* Avatar + name/handle on the left, Save on the right — a plain row instead of
+          a banner hero, matching the reference's compact account header. */}
+      <div className="flex flex-col gap-5 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4">
+          <AvatarUploader
+            src={previewUrl ?? resolveAvatarUrl(user.avatar_url)}
+            name={currentDisplayName}
+            onSelect={handleSelectAvatar}
+            disabled={saving}
+          />
+          <div>
+            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">
+              {currentDisplayName}
+            </h2>
+            <p className="text-sm text-gray-500 dark:text-gray-400">@{user.username}</p>
           </div>
         </div>
 
-        {/* Upload hint — doubles as the "unsaved photo" cue. */}
-        <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
-          {avatarChanged
-            ? 'New photo ready — click Save Changes to apply it.'
-            : 'Click your avatar to upload a new photo. PNG, JPG, WebP, or GIF up to 5 MB.'}
-        </p>
+        <div className="vibe-cta vibe-pill shrink-0">
+          <Button
+            label={saving ? 'Saving…' : 'Save Changes'}
+            type="submit"
+            variant="primary"
+            size="lg"
+            isLoading={saving}
+            isDisabled={!canSave}
+          />
+        </div>
+      </div>
 
-        <div className="mt-10">
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Account details</h3>
-          <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
-            How your account presents itself across VibeNet.
-          </p>
+      {/* Upload hint — doubles as the "unsaved photo" cue. */}
+      <p className="mt-4 text-sm text-gray-500 dark:text-gray-400">
+        {avatarChanged
+          ? 'New photo ready — click Save Changes to apply it.'
+          : 'Click your avatar to upload a new photo. PNG, JPG, WebP, or GIF up to 5 MB.'}
+      </p>
 
-          <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
-            <Field
-              id="display_name"
-              name="display_name"
-              label="Real Name (Display Name)"
-              icon={User}
-              description="What people see across VibeNet."
-              value={displayName}
-              onChange={setDisplayName}
-              error={displayNameErr}
-            />
-            <Field
-              id="username"
-              name="username"
-              label="Username"
-              icon={AtSign}
-              description="Your unique handle in search."
-              value={username}
-              onChange={setUsername}
-              error={usernameErr}
-              required
-            />
-            <Field
-              id="email"
-              label="Email"
-              icon={Mail}
-              value={user.email ?? ''}
-              placeholder="Not set"
-              description="Set when you registered and can't be changed here."
-              readOnly
-            />
-            <Field
-              id="phone"
-              label="Phone Number"
-              icon={Phone}
-              value={user.phone_number ?? ''}
-              placeholder="Not set"
-              description="Set when you registered and can't be changed here."
-              readOnly
-            />
-          </div>
+      <div className="mt-8 border-t border-gray-100 pt-8 dark:border-gray-800">
+        <SectionHeading
+          icon={User}
+          title="Account details"
+          description="How your account presents itself across VibeNet."
+        />
+
+        <div className="mt-6 grid grid-cols-1 gap-6 md:grid-cols-2">
+          <Field
+            id="display_name"
+            name="display_name"
+            label="Real Name (Display Name)"
+            icon={User}
+            description="What people see across VibeNet."
+            value={displayName}
+            onChange={setDisplayName}
+            error={displayNameErr}
+          />
+          <Field
+            id="username"
+            name="username"
+            label="Username"
+            icon={AtSign}
+            description="Your unique handle in search."
+            value={username}
+            onChange={setUsername}
+            error={usernameErr}
+            required
+          />
+          <Field
+            id="email"
+            label="Email"
+            icon={Mail}
+            value={user.email ?? ''}
+            placeholder="Not set"
+            description="Set when you registered and can't be changed here."
+            readOnly
+          />
+          <Field
+            id="phone"
+            label="Phone Number"
+            icon={Phone}
+            value={user.phone_number ?? ''}
+            placeholder="Not set"
+            description="Set when you registered and can't be changed here."
+            readOnly
+          />
         </div>
       </div>
     </form>
@@ -581,14 +590,14 @@ function SecurityPanel({
 
   return (
     <VStack gap={8}>
-      {/* Master toggle — a soft, borderless tint that now spans the full row width,
-          with the switch pinned to the far right (labelSpacing="spread") instead of
-          hugging the label like a narrow, cramped control. */}
-      <div className="flex w-full items-center gap-4 rounded-2xl bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out hover:bg-gray-100/80 dark:bg-white/[0.03] dark:hover:bg-white/[0.05]">
+      {/* Master toggle — a soft tint with a thin border, so it reads as its own card
+          rather than floating paint, with the switch pinned to the far right
+          (labelSpacing="spread") instead of hugging the label. */}
+      <div className="flex w-full items-center gap-4 rounded-2xl border border-gray-200/70 bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out hover:bg-gray-100/80 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.05]">
         <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[color:var(--vibe-blue)]/25 to-[color:var(--vibe-blue)]/5 text-[color:var(--vibe-blue)]">
           <ShieldCheckIcon className="h-6 w-6" />
         </span>
-        <div className="min-w-0 flex-1">
+        <div className="vibe-settings-switch min-w-0 flex-1">
           <Switch
             label="Enable Chat PIN Verification"
             description="Strangers must enter your current PIN before they can message you — your defence against spam."
@@ -606,17 +615,16 @@ function SecurityPanel({
         <VStack gap={5}>
           <div className="h-px bg-gradient-to-r from-transparent via-gray-200 to-transparent dark:via-gray-800" />
 
-          <VStack gap={1}>
-            <Heading level={2}>PIN mode</Heading>
-            <Text type="supporting" color="secondary">
-              Choose how your PIN is generated.
-            </Text>
-          </VStack>
+          <SectionHeading
+            icon={KeyRound}
+            title="PIN mode"
+            description="Choose how your PIN is generated."
+          />
 
           {/* Wrapped in the same soft tint as the master toggle row, so the two
               controls read as one consistent design language — and stretched to
               fill the full row (layout="fill") instead of a small hugging pill. */}
-          <div className="w-full rounded-2xl bg-gray-50/80 p-2 transition-colors duration-300 ease-in-out dark:bg-white/[0.03]">
+          <div className="w-full rounded-2xl border border-gray-200/70 bg-gray-50/80 p-2 transition-colors duration-300 ease-in-out dark:border-white/10 dark:bg-white/[0.03]">
             <SegmentedControl
               value={type}
               onChange={(v) => setType(v as 'rotating' | 'static')}
@@ -630,9 +638,9 @@ function SecurityPanel({
           </div>
 
           {type === 'rotating' ? (
-            // Glowing, borderless code display: a soft brand-gradient wash with two
-            // blurred glow blobs behind it, rather than a flat bordered box.
-            <div className="relative overflow-hidden rounded-3xl bg-gradient-to-br from-[color:var(--vibe-blue)]/[0.07] via-transparent to-[color:var(--vibe-green)]/[0.05] p-8 text-center transition-colors duration-300 ease-in-out">
+            // Glowing code display: a soft brand-gradient wash with two blurred glow
+            // blobs behind it, framed by the same thin border as the rest of the page.
+            <div className="relative overflow-hidden rounded-3xl border border-gray-200/70 bg-gradient-to-br from-[color:var(--vibe-blue)]/[0.07] via-transparent to-[color:var(--vibe-green)]/[0.05] p-8 text-center transition-colors duration-300 ease-in-out dark:border-white/10">
               <div
                 aria-hidden
                 className="pointer-events-none absolute -top-16 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-[color:var(--vibe-blue)]/20 blur-3xl"
@@ -643,9 +651,9 @@ function SecurityPanel({
               />
 
               <div className="relative">
-                <Text type="supporting" color="secondary">
+                <p className="text-sm text-gray-500 dark:text-gray-400">
                   Your current code — it changes every 5 minutes.
-                </Text>
+                </p>
 
                 <div className="mt-3 flex items-center justify-center gap-2">
                   <span className="font-mono text-4xl font-bold tracking-[0.32em] text-gray-900 dark:text-white">
@@ -674,20 +682,20 @@ function SecurityPanel({
                         transition={{ duration: 0.6, ease: 'easeOut' }}
                       />
                     </div>
-                    <Text type="supporting" color="secondary" className="mt-2 block">
+                    <p className="mt-2 block text-sm text-gray-500 dark:text-gray-400">
                       Refreshes in {mmss(remaining)}
-                    </Text>
+                    </p>
                   </div>
                 )}
               </div>
             </div>
           ) : (
             <VStack gap={3}>
-              <Text type="supporting" color="secondary">
+              <p className="text-sm text-gray-500 dark:text-gray-400">
                 {wasStatic
                   ? 'Enter a new 6-digit PIN to change it, or leave blank to keep your current one.'
                   : 'Set a 6-digit PIN you can share with people you want to reach you.'}
-              </Text>
+              </p>
               <PinInput
                 value={customPin}
                 onChange={setCustomPin}
@@ -701,7 +709,7 @@ function SecurityPanel({
       )}
 
       <div className="flex justify-end">
-        <div className="vibe-cta">
+        <div className="vibe-cta vibe-pill">
           <Button
             label={saving ? 'Saving…' : 'Save Security Settings'}
             variant="primary"
@@ -756,14 +764,14 @@ function DangerZone({ user }: { user: AuthUser }) {
     <VStack gap={5}>
       <div className="h-px bg-gradient-to-r from-transparent via-red-200 to-transparent dark:via-red-900/40" />
 
-      <VStack gap={1}>
-        <Heading level={2}>Danger Zone</Heading>
-        <Text type="supporting" color="secondary">
-          These actions affect your whole account. Proceed with caution.
-        </Text>
-      </VStack>
+      <SectionHeading
+        icon={AlertTriangle}
+        tone="danger"
+        title="Danger Zone"
+        description="These actions affect your whole account. Proceed with caution."
+      />
 
-      <div className="flex w-full flex-col gap-4 rounded-2xl bg-amber-50/80 p-5 transition-colors duration-300 ease-in-out dark:bg-amber-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex w-full flex-col gap-4 rounded-2xl border border-amber-200/60 bg-amber-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-amber-500/20 dark:bg-amber-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
             <UserMinus className="h-5 w-5" strokeWidth={1.75} />
@@ -776,7 +784,7 @@ function DangerZone({ user }: { user: AuthUser }) {
             </p>
           </div>
         </div>
-        <div className="vibe-cta-warning shrink-0">
+        <div className="vibe-cta-warning vibe-pill shrink-0">
           <Button
             label="Deactivate Account"
             variant="secondary"
@@ -785,7 +793,7 @@ function DangerZone({ user }: { user: AuthUser }) {
         </div>
       </div>
 
-      <div className="flex w-full flex-col gap-4 rounded-2xl bg-red-50/80 p-5 transition-colors duration-300 ease-in-out dark:bg-red-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex w-full flex-col gap-4 rounded-2xl border border-red-200/60 bg-red-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-red-500/20 dark:bg-red-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/15 text-red-600 dark:text-red-400">
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
@@ -799,12 +807,13 @@ function DangerZone({ user }: { user: AuthUser }) {
             </p>
           </div>
         </div>
-        <Button
-          label="Delete Account"
-          variant="destructive"
-          className="shrink-0"
-          onClick={() => setConfirming('delete')}
-        />
+        <div className="vibe-pill shrink-0">
+          <Button
+            label="Delete Account"
+            variant="destructive"
+            onClick={() => setConfirming('delete')}
+          />
+        </div>
       </div>
 
       <AlertDialog
@@ -990,35 +999,36 @@ function AppearancePanel() {
   const resolved = resolvedTheme === 'dark' ? 'dark' : 'light';
 
   return (
-    <SettingsCard>
-      <VStack gap={5}>
-        <VStack gap={1}>
-          <Heading level={2}>Theme</Heading>
-          <Text type="supporting" color="secondary">
-            Pick how VibeNet looks, or follow your device.
-          </Text>
-        </VStack>
+    <VStack gap={5}>
+      <SectionHeading
+        icon={Palette}
+        title="Theme"
+        description="Pick how VibeNet looks, or follow your device."
+      />
 
-        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-          {(['light', 'dark'] as const).map((option) => (
-            <ThemeCard
-              key={option}
-              scheme={option}
-              isActive={mounted && !followsSystem && theme === option}
-              isResolved={mounted && followsSystem && resolved === option}
-              onSelect={() => setTheme(option)}
-            />
-          ))}
-        </div>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        {(['light', 'dark'] as const).map((option) => (
+          <ThemeCard
+            key={option}
+            scheme={option}
+            isActive={mounted && !followsSystem && theme === option}
+            isResolved={mounted && followsSystem && resolved === option}
+            onSelect={() => setTheme(option)}
+          />
+        ))}
+      </div>
 
+      <div className="vibe-settings-switch w-full rounded-2xl border border-gray-200/70 bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-white/10 dark:bg-white/[0.03]">
         <Switch
           label="Match my system setting"
           description="Follows your device's light/dark preference automatically."
           value={mounted && followsSystem}
           onChange={(on) => setTheme(on ? 'system' : resolved)}
+          width="100%"
+          labelSpacing="spread"
         />
-      </VStack>
-    </SettingsCard>
+      </div>
+    </VStack>
   );
 }
 
@@ -1072,8 +1082,8 @@ export function SettingsPanel({
               'outline-none transition-colors duration-200 ease-in-out',
               'focus-visible:ring-2 focus-visible:ring-blue-500',
               isSelected
-                ? 'bg-gray-200/80 text-gray-900 dark:bg-gray-800/80 dark:text-white'
-                : 'text-gray-600 hover:bg-gray-200/50 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-gray-800/40 dark:hover:text-gray-100',
+                ? 'bg-gray-100 text-gray-900 dark:bg-white/10 dark:text-white'
+                : 'text-gray-600 hover:bg-gray-100/70 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100',
             ].join(' ')}
           >
             <item.icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
@@ -1103,9 +1113,6 @@ export function SettingsPanel({
     </nav>
   );
 
-  // The mobile back-link and (for the non-profile sections) the page title. Profile
-  // opts out of the title: its banner + name already announce the section, and a
-  // heading above a full-bleed banner would just push it off the top.
   const isProfile = section === 'profile';
 
   const backLink = isNarrow && (
@@ -1121,8 +1128,6 @@ export function SettingsPanel({
 
   const content = (
     <>
-      {/* Profile is full-bleed (the banner runs edge to edge); the other sections get
-          the usual page padding and a readable measure. */}
       {isProfile && backLink && <div className="px-6 pt-4 sm:px-8">{backLink}</div>}
 
       {user && isProfile && (
@@ -1162,31 +1167,31 @@ export function SettingsPanel({
     </>
   );
 
-  // Mobile, nav view: the rail owns the pane (no split).
+  // Mobile, nav view: the rail owns the pane (no split), floating on the same soft
+  // gray backdrop as the desktop split below.
   if (isNarrow && mobileView === 'nav') {
     return (
-      <div className={`vibe-settings h-full w-full ${RAIL}`}>{nav}</div>
+      <div className="vibe-settings h-full w-full bg-gray-100/70 p-3 transition-colors duration-300 ease-in-out dark:bg-gray-950">
+        <div className={`${FLOATING_CARD} h-full w-full overflow-hidden`}>{nav}</div>
+      </div>
     );
   }
 
-  // Desktop: an edge-to-edge split filling the dashboard's content area — a fixed nav
-  // rail welded to the left, then the section itself. No outer padding or rounding: the
-  // panel is now the whole surface, which is what lets the profile banner run full
-  // bleed to the top and right edges.
+  // Desktop: a floating nav rail beside a floating content card, both white rounded
+  // panels on a soft gray page backdrop — the reference's "distinct surfaces with
+  // breathing room" rather than an edge-to-edge split.
   return (
-    <div className="vibe-settings flex h-full w-full">
+    <div className="vibe-settings flex h-full w-full gap-4 bg-gray-100/70 p-4 transition-colors duration-300 ease-in-out dark:bg-gray-950 sm:gap-6 sm:p-6">
       {/* Full height, so Log Out pins to the bottom of the rail. */}
       {!isNarrow && (
-        <aside className={`${RAIL} flex h-full w-80 shrink-0 flex-col overflow-x-hidden overflow-y-auto`}>
+        <aside
+          className={`${FLOATING_CARD} flex h-full w-80 shrink-0 flex-col overflow-x-hidden overflow-y-auto`}
+        >
           {nav}
         </aside>
       )}
 
-      {/* One step lighter than the rail in both themes, so the split keeps its depth in
-          dark instead of both halves collapsing to the same slate. */}
-      <main className="min-w-0 flex-1 overflow-y-auto bg-white transition-colors duration-300 ease-in-out dark:bg-gray-900">
-        {content}
-      </main>
+      <main className={`${FLOATING_CARD} min-w-0 flex-1 overflow-y-auto`}>{content}</main>
     </div>
   );
 }
