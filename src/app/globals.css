@@ -207,6 +207,71 @@ body {
   }
 }
 
+/*
+ * Cinematic video hero (components/CinematicHero.tsx): fade-up on mount for
+ * the headline and bottom block. A CSS keyframe (like .vibe-msg-in above)
+ * instead of a React "mounted" state flag — no effect/setState needed, and it
+ * plays once per element the same way regardless of re-renders.
+ */
+@keyframes vibe-hero-in {
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.vibe-hero-in {
+  animation: vibe-hero-in 1s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+.vibe-hero-in--delayed {
+  animation: vibe-hero-in 1s cubic-bezier(0.22, 1, 0.36, 1) 0.3s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .vibe-hero-in,
+  .vibe-hero-in--delayed {
+    animation: none;
+  }
+}
+
+/*
+ * Liquid-glass nav/CTA chrome for the cinematic video hero
+ * (components/CinematicHero.tsx). Unlayered like the brand accents above, so
+ * it wins over Tailwind's layered utilities without needing !important.
+ */
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+.liquid-glass::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+
 /* Brand wordmark in the hero. Size is controlled by Tailwind on the <img>. */
 .vibe-logo {
   margin: 0;

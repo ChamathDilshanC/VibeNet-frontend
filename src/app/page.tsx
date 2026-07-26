@@ -38,6 +38,7 @@ import { Divider } from '@astryxdesign/core/Divider';
 import { MediaTheme } from '@astryxdesign/core/theme';
 import { getToken } from '@/lib/session';
 import { ContactCarousel } from '@/components/ContactCarousel';
+import { CinematicHero } from '@/components/CinematicHero';
 
 // ─── Landing-only fonts ─────────────────────────────────────────────────────
 // Scoped to this page via next/font — the generated CSS variables only exist
@@ -200,139 +201,143 @@ export default function Home() {
   }, [router]);
 
   return (
-    <div
-      className={`${brace.variable} ${poppins.variable} vibe-landing relative w-full flex-1 overflow-hidden`}
-      style={{ fontFamily: 'var(--font-family-body)' }}
-    >
-      <AmbientGlow />
+    <>
+      <CinematicHero />
 
-      <MediaTheme mode="dark">
-        <main className="relative z-10 mx-auto w-full max-w-7xl px-6 pt-24 pb-16 md:pt-32 lg:px-8">
-          <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
-            {/* Left: brand, headline, description, and auth CTAs */}
-            <motion.div
-              className="flex flex-col gap-6"
-              variants={stagger}
-              initial="hidden"
-              animate="show"
-            >
-              {/* Brand wordmark. */}
-              <motion.div variants={fadeUp} className="vibe-logo">
-                <img
-                  src="/logo/vibenet-logo.png"
-                  alt="VibeNet"
-                  width={1787}
-                  height={521}
-                  className="h-auto w-24 sm:w-28 md:w-32"
-                />
-              </motion.div>
+      <div
+        className={`${brace.variable} ${poppins.variable} vibe-landing relative w-full flex-1 overflow-hidden`}
+        style={{ fontFamily: 'var(--font-family-body)' }}
+      >
+        <AmbientGlow />
 
-              <motion.div variants={fadeUp} className="vibe-eyebrow-badge">
-                <span className="vibe-eyebrow-dot" />
-                <Text type="supporting" weight="semibold" className="vibe-eyebrow">
-                  END-TO-END ENCRYPTED
-                </Text>
-              </motion.div>
+        <MediaTheme mode="dark">
+          <main className="relative z-10 mx-auto w-full max-w-7xl px-6 pt-24 pb-16 md:pt-32 lg:px-8">
+            <div className="grid grid-cols-1 items-center gap-12 lg:grid-cols-2 lg:gap-16">
+              {/* Left: brand, headline, description, and auth CTAs */}
+              <motion.div
+                className="flex flex-col gap-6"
+                variants={stagger}
+                initial="hidden"
+                animate="show"
+              >
+                {/* Brand wordmark. */}
+                <motion.div variants={fadeUp} className="vibe-logo">
+                  <img
+                    src="/logo/vibenet-logo.png"
+                    alt="VibeNet"
+                    width={1787}
+                    height={521}
+                    className="h-auto w-24 sm:w-28 md:w-32"
+                  />
+                </motion.div>
 
-              <motion.div variants={fadeUp}>
-                <Text
-                  type="display-1"
-                  as="h1"
-                  className="vibe-landing-headline text-4xl leading-[1.1] sm:text-5xl lg:text-6xl"
-                >
-                  Chat freely.
-                  <br />
-                  Stay <span className="vibe-gradient-text">private</span>.
-                </Text>
-              </motion.div>
+                <motion.div variants={fadeUp} className="vibe-eyebrow-badge">
+                  <span className="vibe-eyebrow-dot" />
+                  <Text type="supporting" weight="semibold" className="vibe-eyebrow">
+                    END-TO-END ENCRYPTED
+                  </Text>
+                </motion.div>
 
-              <motion.div variants={fadeUp} className="flex flex-col gap-3">
-                <Text type="body" color="secondary">
-                  Secure, real-time end-to-end encrypted chat. Your conversations are
-                  encrypted on your device and never leave it in the clear — not to
-                  the network, not to our servers, not to anyone but the people you
-                  talk to.
-                </Text>
-              </motion.div>
+                <motion.div variants={fadeUp}>
+                  <Text
+                    type="display-1"
+                    as="h1"
+                    className="vibe-landing-headline text-4xl leading-[1.1] sm:text-5xl lg:text-6xl"
+                  >
+                    Chat freely.
+                    <br />
+                    Stay <span className="vibe-gradient-text">private</span>.
+                  </Text>
+                </motion.div>
 
-              {/* Auth CTAs — ready to point at the auth routes as they ship. */}
-              <motion.div variants={fadeUp} className="vibe-cta flex flex-wrap items-center gap-3">
-                <Button
-                  label="Register"
-                  variant="primary"
-                  size="lg"
-                  onClick={() => router.push('/register')}
-                />
-                <Button
-                  label="Login"
-                  variant="secondary"
-                  size="lg"
-                  onClick={() => router.push('/login')}
-                />
-              </motion.div>
+                <motion.div variants={fadeUp} className="flex flex-col gap-3">
+                  <Text type="body" color="secondary">
+                    Secure, real-time end-to-end encrypted chat. Your conversations are
+                    encrypted on your device and never leave it in the clear — not to
+                    the network, not to our servers, not to anyone but the people you
+                    talk to.
+                  </Text>
+                </motion.div>
 
-              <motion.div variants={fadeUp} className="flex flex-col gap-4">
-                <Divider />
-                <motion.div
-                  className="flex flex-wrap gap-6"
-                  variants={stagger}
-                  initial="hidden"
-                  animate="show"
-                >
-                  <StatBlock value="E2EE" label="By default" />
-                  <StatBlock value="Real-time" label="Messaging" />
-                  <StatBlock value="Zero-knowledge" label="Servers" />
+                {/* Auth CTAs — ready to point at the auth routes as they ship. */}
+                <motion.div variants={fadeUp} className="vibe-cta flex flex-wrap items-center gap-3">
+                  <Button
+                    label="Register"
+                    variant="primary"
+                    size="lg"
+                    onClick={() => router.push('/register')}
+                  />
+                  <Button
+                    label="Login"
+                    variant="secondary"
+                    size="lg"
+                    onClick={() => router.push('/login')}
+                  />
+                </motion.div>
+
+                <motion.div variants={fadeUp} className="flex flex-col gap-4">
+                  <Divider />
+                  <motion.div
+                    className="flex flex-wrap gap-6"
+                    variants={stagger}
+                    initial="hidden"
+                    animate="show"
+                  >
+                    <StatBlock value="E2EE" label="By default" />
+                    <StatBlock value="Real-time" label="Messaging" />
+                    <StatBlock value="Zero-knowledge" label="Servers" />
+                  </motion.div>
                 </motion.div>
               </motion.div>
-            </motion.div>
 
-            {/* Right: auto-rotating contact carousel */}
+              {/* Right: auto-rotating contact carousel */}
+              <motion.div
+                initial={{ opacity: 0, scale: 0.94 }}
+                animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
+                className="flex items-center justify-center"
+              >
+                <ContactCarousel />
+              </motion.div>
+            </div>
+          </main>
+
+          {/* Features — what the app actually does, for visitors who scroll past the hero. */}
+          <section id="features" className="relative z-10 mx-auto w-full max-w-6xl px-6 py-20 lg:px-8">
             <motion.div
-              initial={{ opacity: 0, scale: 0.94 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1], delay: 0.15 }}
-              className="flex items-center justify-center"
+              className="mx-auto max-w-2xl text-center"
+              initial={{ opacity: 0, y: 16 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true, amount: 0.4 }}
+              transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
             >
-              <ContactCarousel />
+              <Text type="supporting" weight="semibold" display="block" className="vibe-eyebrow">
+                WHAT&rsquo;S INSIDE
+              </Text>
+              <Text
+                type="display-2"
+                as="h2"
+                display="block"
+                className="vibe-landing-headline mt-3 text-3xl leading-[1.15] sm:text-4xl"
+              >
+                Everything a private chat needs.
+              </Text>
             </motion.div>
-          </div>
-        </main>
 
-        {/* Features — what the app actually does, for visitors who scroll past the hero. */}
-        <section id="features" className="relative z-10 mx-auto w-full max-w-6xl px-6 py-20 lg:px-8">
-          <motion.div
-            className="mx-auto max-w-2xl text-center"
-            initial={{ opacity: 0, y: 16 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true, amount: 0.4 }}
-            transition={{ duration: 0.55, ease: [0.22, 1, 0.36, 1] }}
-          >
-            <Text type="supporting" weight="semibold" display="block" className="vibe-eyebrow">
-              WHAT&rsquo;S INSIDE
-            </Text>
-            <Text
-              type="display-2"
-              as="h2"
-              display="block"
-              className="vibe-landing-headline mt-3 text-3xl leading-[1.15] sm:text-4xl"
+            <motion.div
+              className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
+              variants={stagger}
+              initial="hidden"
+              whileInView="show"
+              viewport={{ once: true, amount: 0.15 }}
             >
-              Everything a private chat needs.
-            </Text>
-          </motion.div>
-
-          <motion.div
-            className="mt-14 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3"
-            variants={stagger}
-            initial="hidden"
-            whileInView="show"
-            viewport={{ once: true, amount: 0.15 }}
-          >
-            {FEATURES.map((feature) => (
-              <FeatureCard key={feature.title} feature={feature} />
-            ))}
-          </motion.div>
-        </section>
-      </MediaTheme>
-    </div>
+              {FEATURES.map((feature) => (
+                <FeatureCard key={feature.title} feature={feature} />
+              ))}
+            </motion.div>
+          </section>
+        </MediaTheme>
+      </div>
+    </>
   );
 }
