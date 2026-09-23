@@ -39,7 +39,6 @@ import {
   AtSign,
   Camera,
   Check,
-  ChevronRight,
   Cloud,
   Copy,
   KeyRound,
@@ -71,6 +70,7 @@ import {
 import { clearSession } from '@/lib/session';
 import { DangerZoneConfirmDialog } from '@/components/DangerZoneConfirmDialog';
 import { PinInput } from '@/components/PinInput';
+import { BounceSidebar } from '@/components/ui/bounce-sidebar';
 
 // Mirrors validateUsername in the backend's internal/api/handler.go, so the
 // obvious mistakes are caught inline instead of via a 400. Mixed case is
@@ -1061,41 +1061,36 @@ export function SettingsPanel({
 
   const activeItem = NAV_ITEMS.find((item) => item.id === section) ?? NAV_ITEMS[0];
 
-  // The nav rail. Deliberately NOT Astryx's List — plain buttons let the rail own its
-  // own selected/hover treatment (a tinted pill) rather than the design system's.
+  // The nav rail uses Rare UI's animated bounce indicator so section changes feel
+  // intentional without replacing the controlled settings state.
   const nav = (
-    <nav className="flex h-full min-h-0 flex-1 flex-col gap-1 p-3" aria-label="Settings sections">
-      <h2 className="px-3 pb-2 pt-1 text-xs font-semibold uppercase tracking-wider text-gray-500 dark:text-gray-400">
-        Settings
-      </h2>
+    <nav className="flex h-full min-h-0 flex-1 flex-col p-4" aria-label="Settings sections">
+      <div className="mb-8 px-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-500">
+          Workspace
+        </p>
+        <h2 className="mt-2 text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
+          Settings
+        </h2>
+        <p className="mt-1 text-sm text-gray-500 dark:text-gray-400">
+          Personalize your VibeNet space.
+        </p>
+      </div>
 
-      {NAV_ITEMS.map((item) => {
-        const isSelected = section === item.id;
-        return (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => selectSection(item.id)}
-            aria-current={isSelected ? 'page' : undefined}
-            className={[
-              'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-medium',
-              'outline-none transition-colors duration-200 ease-in-out',
-              'focus-visible:ring-2 focus-visible:ring-blue-500',
-              isSelected
-                ? 'bg-gray-100 text-gray-900 dark:bg-white/10 dark:text-white'
-                : 'text-gray-600 hover:bg-gray-100/70 hover:text-gray-900 dark:text-gray-400 dark:hover:bg-white/5 dark:hover:text-gray-100',
-            ].join(' ')}
-          >
-            <item.icon className="h-[18px] w-[18px] shrink-0" strokeWidth={1.75} />
-            <span className="flex-1 truncate">{item.label}</span>
-            {isNarrow && <ChevronRight className="h-4 w-4 shrink-0 text-gray-400 dark:text-gray-500" />}
-          </button>
-        );
-      })}
+      <BounceSidebar
+        items={NAV_ITEMS.map((item) => item.label)}
+        value={NAV_ITEMS.findIndex((item) => item.id === section)}
+        onChange={(index) => {
+          const item = NAV_ITEMS[index];
+          if (item) selectSection(item.id);
+        }}
+        dotColor="var(--vibe-blue)"
+        aria-label="Settings sections"
+        className="gap-2 pl-5"
+      />
 
-      {/* Log Out sits at the very bottom, quiet until reached for — then red. */}
-      <div className="mt-auto pt-3">
-        <div className="mb-2 h-px bg-gray-200 dark:bg-gray-800" />
+      <div className="mt-auto pt-6">
+        <div className="mb-3 h-px bg-gray-200 dark:bg-gray-800" />
         <button
           type="button"
           onClick={onLogout}
