@@ -597,16 +597,16 @@ body {
 }
 
 /*
- * Chat PIN switch: blue "on" state to match the reference design, instead of the
- * neutral theme's near-black accent. Targets the rendered data-attribute the same
+ * Chat PIN switch: a restrained green "on" state instead of a large blue accent.
+ * Targets the rendered data-attribute the same
  * way .vibe-cta targets Button's data-variant, so it survives the theme's own
  * hover tint-mix rule (higher specificity: two classes + attribute selector).
  */
 .vibe-settings-switch .astryx-switch[data-checked="checked"] {
-  background-color: var(--vibe-blue);
+  background-color: var(--vibe-green);
 }
 .vibe-settings-switch .astryx-switch[data-checked="checked"]:hover {
-  background-color: var(--vibe-blue);
+  background-color: var(--vibe-green);
   filter: brightness(1.05);
 }
 

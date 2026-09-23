@@ -115,9 +115,7 @@ function displayNameError(displayName: string): string | null {
 // page backdrop (see the outer wrapper in SettingsPanel below) rather than an
 // edge-to-edge split — a thin border plus a soft shadow instead of a hard seam.
 const FLOATING_CARD =
-  'rounded-2xl border shadow-sm transition-colors duration-300 ease-in-out ' +
-  'border-gray-200/70 bg-white ' +
-  'dark:border-gray-800 dark:bg-gray-900';
+  'transition-colors duration-300 ease-in-out bg-white dark:bg-black';
 
 // SectionHeading — the icon-badge + title + description row used at the top of
 // every settings section (Account details, PIN mode, Danger Zone, Theme), so the
@@ -178,7 +176,7 @@ function AvatarUploader({
     <label
       className={
         'group relative inline-flex cursor-pointer rounded-full outline-none ' +
-        'focus-within:ring-2 focus-within:ring-blue-500 focus-within:ring-offset-2 ' +
+        'focus-within:ring-2 focus-within:ring-gray-400 focus-within:ring-offset-2 ' +
         'focus-within:ring-offset-white dark:focus-within:ring-offset-gray-900 ' +
         (disabled ? 'pointer-events-none opacity-70' : '')
       }
@@ -274,7 +272,7 @@ function Field({
             'w-full rounded-xl border py-3 pl-11 pr-4 text-sm outline-none',
             'transition-colors duration-200 ease-in-out',
             'placeholder:text-gray-400 dark:placeholder:text-gray-500',
-            'focus:border-blue-500 focus:bg-white focus:ring-2 focus:ring-blue-500/50 dark:focus:bg-gray-900',
+            'focus:border-gray-500 focus:bg-white focus:ring-2 focus:ring-gray-500/30 dark:focus:bg-black',
             readOnly
               ? 'cursor-not-allowed bg-gray-50/80 text-gray-500 dark:bg-white/[0.03] dark:text-gray-400'
               : 'bg-gray-50/60 text-gray-900 dark:bg-white/[0.03] dark:text-white',
@@ -593,8 +591,8 @@ function SecurityPanel({
       {/* Master toggle — a soft tint with a thin border, so it reads as its own card
           rather than floating paint, with the switch pinned to the far right
           (labelSpacing="spread") instead of hugging the label. */}
-      <div className="flex w-full items-center gap-4 rounded-2xl border border-gray-200/70 bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out hover:bg-gray-100/80 dark:border-white/10 dark:bg-white/[0.03] dark:hover:bg-white/[0.05]">
-        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-[color:var(--vibe-blue)]/25 to-[color:var(--vibe-blue)]/5 text-[color:var(--vibe-blue)]">
+      <div className="flex w-full items-center gap-4 border-b border-gray-200 py-5 transition-colors duration-300 ease-in-out dark:border-white/10">
+        <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-gray-100 text-gray-600 dark:bg-white/10 dark:text-gray-300">
           <ShieldCheckIcon className="h-6 w-6" />
         </span>
         <div className="vibe-settings-switch min-w-0 flex-1">
@@ -624,7 +622,7 @@ function SecurityPanel({
           {/* Wrapped in the same soft tint as the master toggle row, so the two
               controls read as one consistent design language — and stretched to
               fill the full row (layout="fill") instead of a small hugging pill. */}
-          <div className="w-full rounded-2xl border border-gray-200/70 bg-gray-50/80 p-2 transition-colors duration-300 ease-in-out dark:border-white/10 dark:bg-white/[0.03]">
+          <div className="w-full border-b border-gray-200 pb-2 transition-colors duration-300 ease-in-out dark:border-white/10">
             <SegmentedControl
               value={type}
               onChange={(v) => setType(v as 'rotating' | 'static')}
@@ -640,14 +638,14 @@ function SecurityPanel({
           {type === 'rotating' ? (
             // Glowing code display: a soft brand-gradient wash with two blurred glow
             // blobs behind it, framed by the same thin border as the rest of the page.
-            <div className="relative overflow-hidden rounded-3xl border border-gray-200/70 bg-gradient-to-br from-[color:var(--vibe-blue)]/[0.07] via-transparent to-[color:var(--vibe-green)]/[0.05] p-8 text-center transition-colors duration-300 ease-in-out dark:border-white/10">
+            <div className="relative overflow-hidden border-b border-gray-200 py-8 text-center transition-colors duration-300 ease-in-out dark:border-white/10">
               <div
                 aria-hidden
-                className="pointer-events-none absolute -top-16 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-[color:var(--vibe-blue)]/20 blur-3xl"
+                className="pointer-events-none absolute -top-16 left-1/2 h-48 w-48 -translate-x-1/2 rounded-full bg-gray-200/40 blur-3xl dark:bg-white/5"
               />
               <div
                 aria-hidden
-                className="pointer-events-none absolute -bottom-16 right-1/4 h-40 w-40 rounded-full bg-[color:var(--vibe-green)]/15 blur-3xl"
+                className="pointer-events-none absolute -bottom-16 right-1/4 h-40 w-40 rounded-full bg-gray-200/30 blur-3xl dark:bg-white/5"
               />
 
               <div className="relative">
@@ -665,7 +663,7 @@ function SecurityPanel({
                       onClick={() => void copyPin()}
                       aria-label="Copy PIN"
                       title="Copy PIN"
-                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-400 outline-none transition-colors duration-200 hover:bg-black/5 hover:text-[color:var(--vibe-blue)] focus-visible:ring-2 focus-visible:ring-[color:var(--vibe-blue)] dark:text-gray-500 dark:hover:bg-white/10"
+                      className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-gray-400 outline-none transition-colors duration-200 hover:bg-black/5 hover:text-gray-700 focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-500 dark:hover:bg-white/10 dark:hover:text-white"
                     >
                       <Copy className="h-4 w-4" strokeWidth={1.75} />
                     </button>
@@ -676,8 +674,7 @@ function SecurityPanel({
                   <div className="mx-auto mt-5 max-w-[220px]">
                     <div className="h-1.5 overflow-hidden rounded-full bg-black/5 dark:bg-white/10">
                       <motion.div
-                        className="h-full rounded-full"
-                        style={{ background: 'var(--vibe-gradient)' }}
+                        className="h-full rounded-full bg-gray-500 dark:bg-gray-400"
                         animate={{ width: `${progressPct}%` }}
                         transition={{ duration: 0.6, ease: 'easeOut' }}
                       />
@@ -771,7 +768,7 @@ function DangerZone({ user }: { user: AuthUser }) {
         description="These actions affect your whole account. Proceed with caution."
       />
 
-      <div className="flex w-full flex-col gap-4 rounded-2xl border border-amber-200/60 bg-amber-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-amber-500/20 dark:bg-amber-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex w-full flex-col gap-4 border-b border-amber-200/70 py-5 transition-colors duration-300 ease-in-out dark:border-amber-500/30 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-amber-600 dark:text-amber-400">
             <UserMinus className="h-5 w-5" strokeWidth={1.75} />
@@ -793,7 +790,7 @@ function DangerZone({ user }: { user: AuthUser }) {
         </div>
       </div>
 
-      <div className="flex w-full flex-col gap-4 rounded-2xl border border-red-200/60 bg-red-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-red-500/20 dark:bg-red-500/[0.06] sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex w-full flex-col gap-4 border-b border-red-200/70 py-5 transition-colors duration-300 ease-in-out dark:border-red-500/30 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-red-500/15 text-red-600 dark:text-red-400">
             <Trash2 className="h-5 w-5" strokeWidth={1.75} />
@@ -887,14 +884,14 @@ function ThemeCard({
       whileTap={{ scale: 0.985 }}
       transition={{ type: 'spring', stiffness: 400, damping: 28 }}
       className={[
-        'group relative block w-full overflow-hidden rounded-3xl text-left',
-        'border transition-shadow duration-300 outline-none',
-        'focus-visible:ring-2 focus-visible:ring-blue-500',
+        'group relative block w-full overflow-hidden text-left',
+        'border-b transition-colors duration-300 outline-none',
+        'focus-visible:ring-2 focus-visible:ring-gray-400',
         isActive
-          ? 'border-blue-500/60 ring-2 ring-blue-500 shadow-[0_0_15px_rgba(59,130,246,0.5)]'
+          ? 'border-gray-700 dark:border-white'
           : isResolved
-            ? 'border-blue-500/30 ring-1 ring-blue-500/30'
-            : 'border-white/10 hover:border-white/25',
+            ? 'border-gray-400 dark:border-gray-500'
+            : 'border-gray-200 dark:border-white/10 hover:border-gray-500',
       ].join(' ')}
     >
       {/* Illustration */}
@@ -902,20 +899,20 @@ function ThemeCard({
         className={[
           'relative h-40 w-full overflow-hidden',
           isDark
-            ? 'bg-gradient-to-br from-[#1e1b4b] via-[#312e81] to-[#0b1220]'
-            : 'bg-gradient-to-br from-sky-300 via-sky-200 to-amber-100',
+            ? 'bg-black'
+            : 'bg-gray-100',
         ].join(' ')}
       >
         {isDark ? (
           <>
             <Moon
-              className="absolute right-6 top-5 h-10 w-10 text-indigo-100 drop-shadow-[0_0_10px_rgba(199,210,254,0.55)]"
+              className="absolute right-6 top-5 h-10 w-10 text-gray-200"
               strokeWidth={1.5}
             />
-            <Star className="absolute left-6 top-6 h-3 w-3 fill-current text-indigo-200/90" strokeWidth={0} />
-            <Star className="absolute left-16 top-12 h-2 w-2 fill-current text-indigo-200/70" strokeWidth={0} />
-            <Star className="absolute left-28 top-5 h-2.5 w-2.5 fill-current text-indigo-200/80" strokeWidth={0} />
-            <Star className="absolute right-24 top-14 h-2 w-2 fill-current text-indigo-200/60" strokeWidth={0} />
+            <Star className="absolute left-6 top-6 h-3 w-3 fill-current text-gray-500" strokeWidth={0} />
+            <Star className="absolute left-16 top-12 h-2 w-2 fill-current text-gray-600" strokeWidth={0} />
+            <Star className="absolute left-28 top-5 h-2.5 w-2.5 fill-current text-gray-500" strokeWidth={0} />
+            <Star className="absolute right-24 top-14 h-2 w-2 fill-current text-gray-600" strokeWidth={0} />
             <Cloud
               className="absolute bottom-5 left-5 h-12 w-12 fill-indigo-400/15 text-indigo-300/35"
               strokeWidth={1.25}
@@ -954,7 +951,7 @@ function ThemeCard({
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0, opacity: 0 }}
               transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-              className="absolute left-4 top-4 flex h-7 w-7 items-center justify-center rounded-full bg-blue-500 text-white shadow-lg shadow-blue-500/40"
+              className="absolute left-4 top-4 flex h-7 w-7 items-center justify-center rounded-full bg-gray-700 text-white"
             >
               <Check className="h-4 w-4" strokeWidth={3} />
             </motion.span>
@@ -963,10 +960,10 @@ function ThemeCard({
       </div>
 
       {/* Caption */}
-      <div className="flex items-center justify-between gap-2 bg-gray-50 px-4 py-3 transition-colors duration-300 ease-in-out dark:bg-gray-900/70">
+      <div className="flex items-center justify-between gap-2 px-0 py-3 transition-colors duration-300 ease-in-out">
         <span className="text-sm font-semibold text-gray-900 dark:text-gray-100">{label}</span>
         {isActive ? (
-          <span className="text-xs font-medium text-blue-600 dark:text-blue-400">Selected</span>
+          <span className="text-xs font-medium text-gray-600 dark:text-gray-300">Selected</span>
         ) : isResolved ? (
           <span className="text-xs font-medium text-gray-500 dark:text-gray-400">Current</span>
         ) : null}
@@ -1018,7 +1015,7 @@ function AppearancePanel() {
         ))}
       </div>
 
-      <div className="vibe-settings-switch w-full rounded-2xl border border-gray-200/70 bg-gray-50/80 p-5 transition-colors duration-300 ease-in-out dark:border-white/10 dark:bg-white/[0.03]">
+      <div className="vibe-settings-switch w-full border-b border-gray-200 py-5 transition-colors duration-300 ease-in-out dark:border-white/10">
         <Switch
           label="Match my system setting"
           description="Follows your device's light/dark preference automatically."
@@ -1066,7 +1063,7 @@ export function SettingsPanel({
   const nav = (
     <nav className="flex h-full min-h-0 flex-1 flex-col p-4" aria-label="Settings sections">
       <div className="mb-8 px-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-blue-500">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-gray-500">
           Workspace
         </p>
         <h2 className="mt-2 text-xl font-semibold tracking-tight text-gray-900 dark:text-white">
@@ -1084,7 +1081,7 @@ export function SettingsPanel({
           const item = NAV_ITEMS[index];
           if (item) selectSection(item.id);
         }}
-        dotColor="var(--vibe-blue)"
+        dotColor="var(--vibe-green)"
         aria-label="Settings sections"
         className="gap-2 pl-5"
       />
@@ -1114,7 +1111,7 @@ export function SettingsPanel({
     <button
       type="button"
       onClick={() => setMobileView('nav')}
-      className="-ml-1 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-blue-500 dark:text-gray-400 dark:hover:text-gray-100"
+      className="-ml-1 flex w-fit items-center gap-1.5 rounded-lg px-2 py-1 text-sm font-medium text-gray-600 outline-none transition-colors duration-200 hover:text-gray-900 focus-visible:ring-2 focus-visible:ring-gray-400 dark:text-gray-400 dark:hover:text-gray-100"
     >
       <ArrowLeft className="h-4 w-4" />
       Settings
@@ -1166,7 +1163,7 @@ export function SettingsPanel({
   // gray backdrop as the desktop split below.
   if (isNarrow && mobileView === 'nav') {
     return (
-      <div className="vibe-settings h-full w-full bg-gray-100/70 p-3 transition-colors duration-300 ease-in-out dark:bg-gray-950">
+      <div className="vibe-settings h-full w-full bg-white p-3 transition-colors duration-300 ease-in-out dark:bg-black">
         <div className={`${FLOATING_CARD} h-full w-full overflow-hidden`}>{nav}</div>
       </div>
     );
@@ -1176,7 +1173,7 @@ export function SettingsPanel({
   // panels on a soft gray page backdrop — the reference's "distinct surfaces with
   // breathing room" rather than an edge-to-edge split.
   return (
-    <div className="vibe-settings flex h-full w-full gap-4 bg-gray-100/70 p-4 transition-colors duration-300 ease-in-out dark:bg-gray-950 sm:gap-6 sm:p-6">
+    <div className="vibe-settings flex h-full w-full gap-4 bg-white p-4 transition-colors duration-300 ease-in-out dark:bg-black sm:gap-6 sm:p-6">
       {/* Full height, so Log Out pins to the bottom of the rail. */}
       {!isNarrow && (
         <aside
